@@ -1,0 +1,6 @@
+a_skill_id,b_skill_id,weight,relational_type
+SKILL-001,SKILL-002,0.9,complementary
+SKILL-003,SKILL-004,0.95,alternative
+SKILL-005,SKILL-004,0.7,complementary
+SKILL-006,SKILL-007,0.6,complementary
+SKILL-005,SKILL-006,0.5,complementary

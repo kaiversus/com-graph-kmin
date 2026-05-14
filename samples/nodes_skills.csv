@@ -1,0 +1,9 @@
+id,name,description,level
+SKILL-001,HTML,Ngon ngu danh dau cau truc trang web,beginner
+SKILL-002,CSS,Ngon ngu tao style cho trang web,beginner
+SKILL-003,JavaScript,Ngon ngu lap trinh cho web,beginner
+SKILL-004,TypeScript,JavaScript co kieu tinh,intermediate
+SKILL-005,React,Thu vien UI component-based,intermediate
+SKILL-006,Node.js,Runtime JavaScript phia server,intermediate
+SKILL-007,SQL,Ngon ngu truy van CSDL quan he,beginner
+SKILL-008,Git,He thong quan ly phien ban,foundational

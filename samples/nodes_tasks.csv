@@ -1,0 +1,5 @@
+id,name,description
+TASK-001,Build Login Form,Xay dung form dang nhap full-stack
+TASK-002,Create REST Endpoint,Tao mot REST API endpoint
+TASK-003,Write JOIN Query,Viet cau lenh SQL JOIN nhieu bang
+TASK-004,Deploy to Vercel,Trien khai ung dung len Vercel

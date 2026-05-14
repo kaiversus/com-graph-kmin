@@ -1,0 +1,9 @@
+id,name,description
+CONCEPT-001,Variable,Bien trong lap trinh
+CONCEPT-002,Function,Ham trong lap trinh
+CONCEPT-003,Closure,Closure trong JavaScript
+CONCEPT-004,Promise,Bat dong bo voi Promise / async-await
+CONCEPT-005,Component,Khai niem component trong UI library
+CONCEPT-006,Hook,"React hooks (useState, useEffect, ...)"
+CONCEPT-007,REST API,Kien truc REST API
+CONCEPT-008,Normalization,"Chuan hoa CSDL quan he (1NF, 2NF, 3NF)"

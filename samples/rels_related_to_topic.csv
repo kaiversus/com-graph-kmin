@@ -1,0 +1,3 @@
+a_topic_id,b_topic_id,weight,relational_type
+TOPIC-004,TOPIC-005,0.8,complementary
+TOPIC-003,TOPIC-007,0.5,complementary

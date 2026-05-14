@@ -1,0 +1,4 @@
+a_concept_id,b_concept_id,weight,relational_type
+CONCEPT-005,CONCEPT-006,0.9,complementary
+CONCEPT-002,CONCEPT-003,0.7,similar
+CONCEPT-004,CONCEPT-007,0.6,complementary

@@ -1,0 +1,13 @@
+user_id,skill_id,proficiency,confidence,credentials
+USER-002,SKILL-001,intermediate,0.85,COURSE-001
+USER-002,SKILL-002,intermediate,0.85,COURSE-001
+USER-002,SKILL-003,beginner,0.6,self-study
+USER-003,SKILL-001,advance,0.95,work-experience
+USER-003,SKILL-002,advance,0.95,work-experience
+USER-003,SKILL-003,advance,0.9,work-experience
+USER-003,SKILL-005,intermediate,0.8,COURSE-003
+USER-003,SKILL-008,intermediate,0.7,self-study
+USER-004,SKILL-006,advance,0.95,work-experience
+USER-004,SKILL-007,advance,0.95,work-experience
+USER-004,SKILL-003,intermediate,0.75,work-experience
+USER-004,SKILL-008,advance,0.9,work-experience

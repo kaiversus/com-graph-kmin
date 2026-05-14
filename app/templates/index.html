@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>COM Platform · Graph DB Admin</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <!-- vis-network (standalone bundle includes vis-data) -->
+  <link href="https://unpkg.com/vis-network@9.1.9/styles/vis-network.min.css" rel="stylesheet" />
+  <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>COM Platform — Graph DB Admin</h1>
+    <p class="subtitle">Knowledge Graph data import · validation · snapshot · rollback</p>
+    <div id="health-badge" class="health-badge">checking…</div>
+  </header>
+
+  <nav class="tabs">
+    <button data-tab="opt1" class="tab active">Option 1 · Single entity</button>
+    <button data-tab="opt2" class="tab">Option 2 · CSV bulk</button>
+    <button data-tab="audit" class="tab">Audit · Restore</button>
+    <button data-tab="viz" class="tab">Visualizer</button>
+  </nav>
+
+  <!-- ========== OPTION 1 ========== -->
+  <section id="opt1" class="panel active">
+    <h2>Option 1 — nhập từng entity</h2>
+    <p class="hint">Chọn label, điền properties, thêm relationships kèm. Validate → Review → Commit.</p>
+
+    <div class="row">
+      <label>Node label</label>
+      <select id="opt1-label"></select>
+    </div>
+    <div id="opt1-props" class="props-grid"></div>
+
+    <h3>Relationships đi kèm <button id="opt1-add-rel" type="button">+ thêm</button></h3>
+    <div id="opt1-rels"></div>
+
+    <div class="actions">
+      <button id="opt1-validate" type="button">1. Validate</button>
+      <button id="opt1-commit" type="button" disabled>3. Commit</button>
+    </div>
+
+    <div id="opt1-result" class="result-box"></div>
+  </section>
+
+  <!-- ========== OPTION 2 ========== -->
+  <section id="opt2" class="panel">
+    <h2>Option 2 — CSV bulk import</h2>
+    <p class="hint">
+      <strong>Cách 1 (auto-detect):</strong> upload file đặt tên theo convention
+      (vd <code>nodes_skills.csv</code>, <code>rels_teaches.csv</code>) — system tự nhận diện và map header.
+      <br/>
+      <strong>Cách 2 (manual):</strong> chọn kind &amp; target rồi upload, file phải dùng header chuẩn nội bộ.
+      <br/>
+      <a href="/api/option2/presets" target="_blank">Xem danh sách preset hỗ trợ</a>
+    </p>
+
+    <div class="row">
+      <input type="file" id="opt2-file" accept=".csv" multiple />
+      <button id="opt2-validate" type="button">1. Validate file đã chọn</button>
+      <button id="opt2-commit" type="button" disabled>3. Commit batch hiện tại</button>
+    </div>
+
+    <details>
+      <summary>Manual override (optional)</summary>
+      <div class="row">
+        <label>Kind</label>
+        <select id="opt2-kind">
+          <option value="">(auto)</option>
+          <option value="node">Node</option>
+          <option value="rel">Relationship</option>
+        </select>
+        <label>Target</label>
+        <select id="opt2-target"><option value="">(auto)</option></select>
+        <button id="opt2-template" type="button">Tải template format chuẩn</button>
+      </div>
+    </details>
+
+    <div id="opt2-result" class="result-box"></div>
+  </section>
+
+  <!-- ========== AUDIT ========== -->
+  <section id="audit" class="panel">
+    <h2>Audit log &amp; Restore</h2>
+    <p class="hint">Mỗi lần import lưu 1 AuditLog với snapshot. Bấm Restore để hoàn tác về trạng thái cũ.</p>
+    <button id="audit-refresh" type="button">Refresh</button>
+    <table id="audit-table">
+      <thead>
+        <tr><th>ID</th><th>Time</th><th>Actor</th><th>Op/Option</th><th>Status</th><th>N/R count</th><th>Action</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div id="audit-detail" class="result-box"></div>
+  </section>
+
+  <!-- ========== VISUALIZER ========== -->
+  <section id="viz" class="panel">
+    <h2>Graph visualizer</h2>
+    <p class="hint">Render toàn bộ graph hoặc dùng Quick Query để xem sub-graph cụ thể.</p>
+    <div class="row">
+      <button id="viz-render" type="button">Render All</button>
+      <button id="viz-wipe" type="button" class="danger">⚠ Wipe data (giữ AuditLog)</button>
+    </div>
+
+    <div class="quick-query-bar">
+      <h3>Quick Queries</h3>
+      <div class="qq-row">
+        <label>Users co Skill:</label>
+        <select id="qq-skill"><option value="">-- chọn Skill --</option></select>
+        <button id="qq-btn-users-by-skill" type="button">Query</button>
+      </div>
+      <div class="qq-row">
+        <label>Courses trong Concept:</label>
+        <select id="qq-concept"><option value="">-- chọn Concept --</option></select>
+        <button id="qq-btn-courses-by-concept" type="button">Query</button>
+      </div>
+      <div class="qq-row">
+        <label>Skills trong Course:</label>
+        <select id="qq-course"><option value="">-- chọn Course --</option></select>
+        <button id="qq-btn-skills-by-course" type="button">Query</button>
+      </div>
+    </div>
+
+    <div id="viz-canvas"></div>
+  </section>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

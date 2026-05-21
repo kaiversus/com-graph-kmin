@@ -20,6 +20,8 @@
     <button data-tab="opt2" class="tab">Option 2 · CSV bulk</button>
     <button data-tab="audit" class="tab">Audit · Restore</button>
     <button data-tab="viz" class="tab">Visualizer</button>
+    <button data-tab="roadmap" class="tab">Roadmap</button>
+    <button data-tab="export" class="tab">Export Data</button>
   </nav>
 
   <!-- ========== OPTION 1 ========== -->
@@ -97,9 +99,13 @@
   <!-- ========== VISUALIZER ========== -->
   <section id="viz" class="panel">
     <h2>Graph visualizer</h2>
-    <p class="hint">Render toàn bộ graph hoặc dùng Quick Query để xem sub-graph cụ thể.</p>
+    <p class="hint">Render toàn bộ graph hoặc dùng Quick Query để xem sub-graph cụ thể. Click vào node để xem properties bên phải.</p>
     <div class="row">
       <button id="viz-render" type="button">Render All</button>
+      <div class="viz-mode-toggle">
+        <button id="viz-mode-graph" type="button" class="mode-btn active">Graph</button>
+        <button id="viz-mode-table" type="button" class="mode-btn">Table</button>
+      </div>
       <button id="viz-wipe" type="button" class="danger">⚠ Wipe data (giữ AuditLog)</button>
     </div>
 
@@ -122,7 +128,156 @@
       </div>
     </div>
 
-    <div id="viz-canvas"></div>
+    <div class="viz-workspace">
+      <div class="viz-main">
+        <div id="viz-canvas"></div>
+        <div id="viz-table-view" class="viz-table-container" style="display:none">
+          <div class="table-section">
+            <h3>Nodes</h3>
+            <table id="viz-nodes-table">
+              <thead><tr></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div class="table-section">
+            <h3>Relationships</h3>
+            <table id="viz-rels-table">
+              <thead><tr></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div id="node-detail-panel" class="node-detail-panel">
+        <div class="ndp-header">
+          <h3 id="ndp-title">Node Properties</h3>
+          <button id="ndp-close" type="button">×</button>
+        </div>
+        <div id="ndp-content">
+          <p class="hint">Click vào 1 node trên graph để xem properties.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== ROADMAP ========== -->
+  <section id="roadmap" class="panel">
+    <div class="roadmap-header">
+      <h2>Learning Roadmap</h2>
+      <p class="roadmap-subtitle">Chọn khóa học hoặc chủ đề để xem lộ trình học tập. Sơ đồ hiển thị từ trên xuống dưới theo thứ tự nên học.</p>
+    </div>
+
+    <div class="roadmap-controls">
+      <div class="roadmap-source-group">
+        <div class="roadmap-source-card" id="rm-source-course">
+          <div class="rsc-icon">📘</div>
+          <div class="rsc-body">
+            <label>Chọn khóa học</label>
+            <select id="rm-course-sel">
+              <option value="">-- Chọn Course --</option>
+            </select>
+          </div>
+          <button id="rm-gen-course" type="button" class="roadmap-gen-btn">Tạo Roadmap</button>
+        </div>
+        <div class="roadmap-source-card" id="rm-source-topic">
+          <div class="rsc-icon">📂</div>
+          <div class="rsc-body">
+            <label>Chọn chủ đề</label>
+            <select id="rm-topic-sel">
+              <option value="">-- Chọn Topic --</option>
+            </select>
+          </div>
+          <button id="rm-gen-topic" type="button" class="roadmap-gen-btn">Tạo Roadmap</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="rm-legend" class="roadmap-legend" style="display:none">
+      <span class="rm-legend-item"><span class="rm-dot rm-dot-root"></span> Khóa học / Chủ đề</span>
+      <span class="rm-legend-item"><span class="rm-dot rm-dot-level"></span> Cấp độ</span>
+      <span class="rm-legend-item"><span class="rm-dot rm-dot-skill"></span> Kỹ năng</span>
+      <span class="rm-legend-item"><span class="rm-dot rm-dot-concept"></span> Khái niệm</span>
+      <span class="rm-legend-item"><span class="rm-dot rm-dot-prereq"></span> Điều kiện tiên quyết</span>
+    </div>
+
+    <div id="rm-canvas" class="roadmap-canvas">
+      <div class="roadmap-empty-state">
+        <div class="res-icon">🗺️</div>
+        <h3>Chưa có Roadmap</h3>
+        <p>Chọn một khóa học hoặc chủ đề ở trên, rồi bấm <strong>Tạo Roadmap</strong> để xem lộ trình học tập.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== EXPORT DATA ========== -->
+  <section id="export" class="panel">
+    <h2>Export Data</h2>
+    <p class="hint">Dump dữ liệu graph ra nhiều định dạng. Chọn mục cần export, định dạng, rồi bấm Export.</p>
+
+    <div class="export-grid">
+      <!-- Left: Options -->
+      <div class="export-options">
+        <div class="export-card">
+          <h3>Full Graph Dump</h3>
+          <p class="hint">Export toàn bộ nodes + relationships trong 1 file.</p>
+          <div class="export-actions">
+            <button id="exp-full-json" type="button">Export JSON</button>
+            <button id="exp-full-cypher" type="button">Export Cypher</button>
+          </div>
+        </div>
+
+        <div class="export-card">
+          <h3>Export theo Node Label</h3>
+          <p class="hint">Chọn label cần export. Số lượng hiện bên cạnh.</p>
+          <div id="exp-node-list" class="export-checklist"></div>
+          <div class="row" style="margin-top:8px">
+            <label>Format</label>
+            <select id="exp-node-fmt">
+              <option value="json">JSON</option>
+              <option value="csv">CSV</option>
+              <option value="cypher">Cypher</option>
+            </select>
+            <button id="exp-nodes-go" type="button">Export Selected</button>
+          </div>
+        </div>
+
+        <div class="export-card">
+          <h3>Export theo Relationship Type</h3>
+          <p class="hint">Chọn relationship type cần export.</p>
+          <div id="exp-rel-list" class="export-checklist"></div>
+          <div class="row" style="margin-top:8px">
+            <label>Format</label>
+            <select id="exp-rel-fmt">
+              <option value="json">JSON</option>
+              <option value="csv">CSV</option>
+              <option value="cypher">Cypher</option>
+            </select>
+            <button id="exp-rels-go" type="button">Export Selected</button>
+          </div>
+        </div>
+
+        <div class="export-card">
+          <h3>Dump Single Node</h3>
+          <p class="hint">Xem toàn bộ properties + connections của 1 node cụ thể.</p>
+          <div class="row">
+            <label>Label</label>
+            <select id="exp-single-label"></select>
+            <label>ID</label>
+            <input id="exp-single-id" placeholder="VD: SKILL-001" />
+            <button id="exp-single-go" type="button">Dump</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Preview -->
+      <div class="export-preview">
+        <div class="export-preview-header">
+          <h3>Preview / Result</h3>
+          <button id="exp-copy" type="button" title="Copy to clipboard">Copy</button>
+        </div>
+        <pre id="exp-output" class="export-output">Chọn export option bên trái để xem kết quả ở đây.</pre>
+      </div>
+    </div>
   </section>
 
   <script src="/static/app.js"></script>

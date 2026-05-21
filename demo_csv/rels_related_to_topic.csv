@@ -1,0 +1,2 @@
+a_topic_id,b_topic_id,weight,relational_type
+TOPIC-FRONTEND,TOPIC-BACKEND,0.7,complementary

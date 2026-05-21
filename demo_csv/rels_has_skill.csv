@@ -1,0 +1,9 @@
+user_id,skill_id,proficiency,confidence,credentials
+USER-001,SKILL-HTML,intermediate,0.8,
+USER-001,SKILL-CSS,intermediate,0.75,
+USER-001,SKILL-JS,beginner,0.6,
+USER-002,SKILL-HTML,expert,0.95,FreeCodeCamp Certificate
+USER-002,SKILL-REACT,advance,0.85,
+USER-002,SKILL-NODEJS,intermediate,0.7,
+USER-003,SKILL-SQL,beginner,0.5,
+USER-003,SKILL-GIT,foundational,0.4,

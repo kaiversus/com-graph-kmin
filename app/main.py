@@ -27,17 +27,17 @@ async def lifespan(app: FastAPI):
     print(f"[startup] Connecting to Neo4j at {NEO4J_URI} (user={NEO4J_USER}, db={NEO4J_DATABASE})")
     ok, err = verify_connectivity()
     if not ok:
-        print(f"[startup] ❌ Neo4j connectivity check FAILED: {err}", file=sys.stderr)
+        print(f"[startup] [FAIL] Neo4j connectivity check FAILED: {err}", file=sys.stderr)
         print("[startup] Common causes:", file=sys.stderr)
-        print("  • Aura: scheme phải là neo4j+s:// (không phải bolt://)", file=sys.stderr)
-        print("  • Aura Free: instance có thể đang paused (3 ngày idle) — vào console Resume", file=sys.stderr)
-        print("  • Sai username: Aura username luôn là 'neo4j', KHÔNG phải instance ID", file=sys.stderr)
-        print("    (instance ID là subdomain trong URI, dùng để định danh instance, không phải user)", file=sys.stderr)
-        print("  • Sai password (Aura cấp 1 lần lúc tạo, mất phải Reset trong console)", file=sys.stderr)
-        print("  • Mạng chặn port 7687 outbound (firewall công ty/trường)", file=sys.stderr)
-        print("[startup] App vẫn start nhưng các thao tác Neo4j sẽ fail. Sửa .env rồi reload.", file=sys.stderr)
+        print("  - Aura: scheme phai la neo4j+s:// (khong phai bolt://)", file=sys.stderr)
+        print("  - Aura Free: instance co the dang paused (3 ngay idle) -- vao console Resume", file=sys.stderr)
+        print("  - Sai username: Aura username luon la 'neo4j', KHONG phai instance ID", file=sys.stderr)
+        print("    (instance ID la subdomain trong URI, dung de dinh danh instance, khong phai user)", file=sys.stderr)
+        print("  - Sai password (Aura cap 1 lan luc tao, mat phai Reset trong console)", file=sys.stderr)
+        print("  - Mang chan port 7687 outbound (firewall cong ty/truong)", file=sys.stderr)
+        print("[startup] App van start nhung cac thao tac Neo4j se fail. Sua .env roi reload.", file=sys.stderr)
     else:
-        print("[startup] ✓ Neo4j connectivity OK")
+        print("[startup] [OK] Neo4j connectivity OK")
         # Create constraints (safe to run repeatedly)
         try:
             driver = get_driver()
@@ -52,9 +52,9 @@ async def lifespan(app: FastAPI):
                     "CREATE CONSTRAINT unique_AuditLog_id IF NOT EXISTS "
                     "FOR (a:AuditLog) REQUIRE a.id IS UNIQUE"
                 )
-            print(f"[startup] ✓ Constraints ensured for {len(NODE_LABELS)} labels + AuditLog")
+            print(f"[startup] [OK] Constraints ensured for {len(NODE_LABELS)} labels + AuditLog")
         except Exception as e:
-            print(f"[startup] ⚠ Could not create constraints: {e}", file=sys.stderr)
+            print(f"[startup] [WARN] Could not create constraints: {e}", file=sys.stderr)
     yield
     close_driver()
 

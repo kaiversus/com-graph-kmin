@@ -11,6 +11,8 @@ document.querySelectorAll('.tab').forEach(btn => {
     document.getElementById(btn.dataset.tab).classList.add('active');
     if (btn.dataset.tab === 'audit') refreshAudit();
     if (btn.dataset.tab === 'viz') renderViz();
+    if (btn.dataset.tab === 'roadmap') loadRoadmapSources();
+    if (btn.dataset.tab === 'export') loadExportStats();
   });
 });
 
@@ -378,9 +380,26 @@ function buildTooltipEl(label, props) {
   </div>`;
 }
 
+// ---- Current graph data cache (used by table view + node click) ----
+let currentGraphData = null;
+let vizMode = 'graph'; // 'graph' | 'table'
+
 // ---- Shared render function (used by Render All + Quick Queries) ----
 function renderVizWithData(data) {
+  currentGraphData = data;
+
+  if (vizMode === 'table') {
+    renderTableView(data);
+    return;
+  }
+  renderGraphView(data);
+}
+
+function renderGraphView(data) {
   const container = document.getElementById('viz-canvas');
+  const tableView = document.getElementById('viz-table-view');
+  container.style.display = '';
+  tableView.style.display = 'none';
 
   if (typeof vis === 'undefined' || !vis.Network || !vis.DataSet) {
     container.innerHTML = '<div style="padding:20px;color:#fc8181;font-family:monospace"><strong>Library error:</strong> vis-network not loaded.</div>';
@@ -402,6 +421,8 @@ function renderVizWithData(data) {
       size: 24,
       borderWidth: 2.5,
       font: { size: 13, color: '#e2e8f0', strokeWidth: 3, strokeColor: '#1a202c' },
+      _rawLabel: label,
+      _rawProps: n.props,
     };
   });
 
@@ -423,7 +444,6 @@ function renderVizWithData(data) {
     };
   });
 
-  // Build legend
   const labelCounts = {};
   data.nodes.forEach(n => { const l = n.labels[0] || 'Unknown'; labelCounts[l] = (labelCounts[l] || 0) + 1; });
   const relCounts = {};
@@ -448,10 +468,11 @@ function renderVizWithData(data) {
   if (vizNetwork) { vizNetwork.destroy(); vizNetwork = null; }
 
   try {
+    const nodesDS = new vis.DataSet(nodes);
     const netEl = document.getElementById('viz-net');
     vizNetwork = new vis.Network(
       netEl,
-      { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) },
+      { nodes: nodesDS, edges: new vis.DataSet(edges) },
       {
         physics: {
           stabilization: { enabled: true, iterations: 300, updateInterval: 25 },
@@ -465,11 +486,145 @@ function renderVizWithData(data) {
     vizNetwork.on('stabilizationIterationsDone', () => {
       vizNetwork.setOptions({ physics: { stabilization: false } });
     });
+
+    // Node click → show properties in side panel
+    vizNetwork.on('click', (params) => {
+      if (params.nodes.length === 1) {
+        const nodeId = params.nodes[0];
+        const nodeData = nodesDS.get(nodeId);
+        if (nodeData && nodeData._rawLabel && nodeData._rawProps) {
+          showNodeDetailPanel(nodeData._rawLabel, nodeData._rawProps);
+        }
+      }
+    });
   } catch (e) {
     console.error('[viz] Network creation failed:', e);
     container.innerHTML += `<div style="padding:20px;color:#fc8181;font-family:monospace"><strong>Render error:</strong> ${e.message}</div>`;
   }
 }
+
+// ---- Table view ----
+function renderTableView(data) {
+  const canvas = document.getElementById('viz-canvas');
+  const tableView = document.getElementById('viz-table-view');
+  canvas.style.display = 'none';
+  tableView.style.display = '';
+
+  // Nodes table
+  const allNodeKeys = new Set();
+  data.nodes.forEach(n => {
+    allNodeKeys.add('_label');
+    Object.keys(n.props).forEach(k => allNodeKeys.add(k));
+  });
+  const nodeKeys = Array.from(allNodeKeys);
+
+  const ntHead = document.querySelector('#viz-nodes-table thead tr');
+  ntHead.innerHTML = nodeKeys.map(k => `<th>${k === '_label' ? 'Label' : k}</th>`).join('');
+  const ntBody = document.querySelector('#viz-nodes-table tbody');
+  ntBody.innerHTML = data.nodes.map(n => {
+    const label = n.labels[0] || '';
+    return `<tr class="table-row-clickable" data-label="${label}" data-props='${JSON.stringify(n.props).replace(/'/g, "&#39;")}'>` +
+      nodeKeys.map(k => {
+        if (k === '_label') return `<td><span class="legend-pill" style="border-color:${(LABEL_COLORS[label] || {border:'#718096'}).border};font-size:11px;padding:1px 6px">${label}</span></td>`;
+        return `<td title="${String(n.props[k] ?? '')}">${n.props[k] ?? ''}</td>`;
+      }).join('') + '</tr>';
+  }).join('');
+
+  // Click row → show detail panel
+  ntBody.querySelectorAll('.table-row-clickable').forEach(tr => {
+    tr.addEventListener('click', () => {
+      const label = tr.dataset.label;
+      const props = JSON.parse(tr.dataset.props);
+      showNodeDetailPanel(label, props);
+    });
+  });
+
+  // Rels table
+  const allRelKeys = ['type', 'start', 'end'];
+  const extraRelKeys = new Set();
+  data.relationships.forEach(r => Object.keys(r.props).forEach(k => extraRelKeys.add(k)));
+  const relKeys = [...allRelKeys, ...Array.from(extraRelKeys)];
+
+  const rtHead = document.querySelector('#viz-rels-table thead tr');
+  rtHead.innerHTML = relKeys.map(k => `<th>${k}</th>`).join('');
+  const rtBody = document.querySelector('#viz-rels-table tbody');
+  rtBody.innerHTML = data.relationships.map(r => {
+    return '<tr>' + relKeys.map(k => {
+      if (k === 'type') return `<td style="color:var(--success);font-weight:600">${r.type}</td>`;
+      if (k === 'start' || k === 'end') return `<td>${r[k]}</td>`;
+      return `<td>${r.props[k] ?? ''}</td>`;
+    }).join('') + '</tr>';
+  }).join('');
+}
+
+// ---- Graph/Table toggle ----
+document.getElementById('viz-mode-graph').addEventListener('click', () => {
+  vizMode = 'graph';
+  document.getElementById('viz-mode-graph').classList.add('active');
+  document.getElementById('viz-mode-table').classList.remove('active');
+  if (currentGraphData) renderVizWithData(currentGraphData);
+});
+document.getElementById('viz-mode-table').addEventListener('click', () => {
+  vizMode = 'table';
+  document.getElementById('viz-mode-table').classList.add('active');
+  document.getElementById('viz-mode-graph').classList.remove('active');
+  if (currentGraphData) renderVizWithData(currentGraphData);
+});
+
+// ---- Node Detail Panel ----
+function showNodeDetailPanel(label, props) {
+  const panel = document.getElementById('node-detail-panel');
+  const title = document.getElementById('ndp-title');
+  const content = document.getElementById('ndp-content');
+  panel.classList.remove('hidden');
+
+  const color = LABEL_COLORS[label] || { background: '#4a5568', border: '#718096' };
+  title.textContent = label;
+
+  const pk = props.id || props.id_user || props.id_course || Object.values(props)[0] || '';
+
+  let html = `<span class="ndp-label-badge" style="background:${color.background};color:#fff;border:1px solid ${color.border}">${label}</span>`;
+
+  // Properties section
+  html += '<div class="ndp-section"><h4>Properties</h4><table class="ndp-prop-table">';
+  for (const [k, v] of Object.entries(props)) {
+    html += `<tr><td>${k}</td><td>${v}</td></tr>`;
+  }
+  html += '</table></div>';
+
+  // Connections section — fetch from API
+  content.innerHTML = html + '<div class="ndp-section"><h4>Connections</h4><div id="ndp-conn-loading" style="color:#718096">Loading...</div></div>';
+
+  fetch(`/api/export/node/${label}/${encodeURIComponent(pk)}`)
+    .then(r => r.ok ? r.json() : Promise.reject('Not found'))
+    .then(data => {
+      const connEl = document.getElementById('ndp-conn-loading');
+      if (!connEl) return;
+      if (!data.connections || data.connections.length === 0) {
+        connEl.textContent = 'No connections.';
+        return;
+      }
+      connEl.innerHTML = data.connections.map(c => {
+        const arrow = c.direction === 'outgoing' ? '→' : '←';
+        const rpHtml = Object.keys(c.rel_props).length
+          ? `<div class="ndp-conn-props">${Object.entries(c.rel_props).map(([k,v]) => `${k}: ${v}`).join(', ')}</div>` : '';
+        return `<div class="ndp-conn">
+          <span class="conn-type">${c.rel_type}</span>
+          <span class="conn-dir">${arrow} ${c.direction}</span>
+          <span class="conn-target">${c.other_label}: ${c.other_name}</span>
+          ${rpHtml}
+        </div>`;
+      }).join('');
+    })
+    .catch(() => {
+      const connEl = document.getElementById('ndp-conn-loading');
+      if (connEl) connEl.textContent = 'Could not load connections.';
+    });
+}
+
+document.getElementById('ndp-close').addEventListener('click', () => {
+  document.getElementById('node-detail-panel').classList.add('hidden');
+});
 
 // ---- Render All (fetch full graph then render) ----
 async function renderViz() {
@@ -549,6 +704,408 @@ document.getElementById('viz-wipe').addEventListener('click', async () => {
   const r = await fetch('/api/graph/wipe?confirm=YES', { method: 'DELETE' });
   alert(r.ok ? 'Wiped.' : 'Failed.');
   if (vizNetwork) renderViz();
+});
+
+// ===========================================================
+// ROADMAP
+// ===========================================================
+const RM_NODE_STYLES = {
+  Course:       { bg: '#4f46e5', border: '#3730a3', shape: 'box',     size: 30, fontColor: '#fff', fontFace: 'sans-serif', fontSize: 16 },
+  Topic:        { bg: '#7c3aed', border: '#5b21b6', shape: 'box',     size: 28, fontColor: '#fff', fontFace: 'sans-serif', fontSize: 16 },
+  Level:        { bg: '#f59e0b', border: '#d97706', shape: 'box',     size: 22, fontColor: '#fff', fontFace: 'sans-serif', fontSize: 14 },
+  Skill:        { bg: '#3b82f6', border: '#2563eb', shape: 'box',     size: 20, fontColor: '#fff', fontFace: 'sans-serif', fontSize: 13 },
+  Concept:      { bg: '#10b981', border: '#059669', shape: 'box',     size: 18, fontColor: '#fff', fontFace: 'sans-serif', fontSize: 13 },
+  ConceptGroup: { bg: '#10b981', border: '#047857', shape: 'box',     size: 22, fontColor: '#fff', fontFace: 'sans-serif', fontSize: 14 },
+  Prerequisite: { bg: '#ef4444', border: '#dc2626', shape: 'box',     size: 16, fontColor: '#fff', fontFace: 'sans-serif', fontSize: 12 },
+};
+
+let rmNetwork = null;
+
+async function loadRoadmapSources() {
+  try {
+    const r = await fetch('/api/roadmap/sources');
+    const data = await r.json();
+    const cSel = document.getElementById('rm-course-sel');
+    cSel.innerHTML = '<option value="">-- Chọn Course --</option>';
+    data.courses.forEach(c => cSel.appendChild(new Option(c.name || c.id, c.id)));
+
+    const tSel = document.getElementById('rm-topic-sel');
+    tSel.innerHTML = '<option value="">-- Chọn Topic --</option>';
+    data.topics.forEach(t => tSel.appendChild(new Option(t.name || t.id, t.id)));
+  } catch (e) {
+    console.warn('[roadmap] Failed to load sources:', e);
+  }
+}
+
+function renderRoadmap(data) {
+  const canvas = document.getElementById('rm-canvas');
+  document.getElementById('rm-legend').style.display = 'flex';
+
+  canvas.innerHTML = '<div id="rm-tree"></div>';
+
+  if (!data.nodes.length) {
+    canvas.innerHTML = '<div class="roadmap-empty-state"><div class="res-icon">📭</div><h3>Không có dữ liệu</h3><p>Khóa học/chủ đề này chưa có skills hoặc concepts nào.</p></div>';
+    return;
+  }
+
+  const nodes = data.nodes.map(n => {
+    const style = RM_NODE_STYLES[n.type] || RM_NODE_STYLES.Skill;
+    const metaLine = n.meta ? `\n${n.meta}` : '';
+    return {
+      id: n.id,
+      label: n.label + metaLine,
+      shape: style.shape,
+      size: style.size,
+      color: {
+        background: style.bg,
+        border: style.border,
+        highlight: { background: style.border, border: style.bg },
+        hover:     { background: style.border, border: style.bg },
+      },
+      font: {
+        color: style.fontColor,
+        face: style.fontFace,
+        size: style.fontSize,
+        multi: 'md',
+        bold: { color: style.fontColor, size: style.fontSize + 2 },
+      },
+      borderWidth: 2,
+      margin: { top: 10, bottom: 10, left: 14, right: 14 },
+      shadow: { enabled: true, color: 'rgba(0,0,0,0.1)', size: 6, x: 1, y: 3 },
+      widthConstraint: { minimum: 120, maximum: 220 },
+      _rmType: n.type,
+      _rmMeta: n.meta,
+    };
+  });
+
+  const edges = data.edges.map((e, i) => ({
+    id: 'rme_' + i,
+    from: e.from,
+    to: e.to,
+    arrows: { to: { enabled: true, scaleFactor: 0.6, type: 'arrow' } },
+    color: {
+      color: e.style === 'dashed' ? '#f87171' : '#94a3b8',
+      highlight: '#4f46e5',
+      hover: '#6366f1',
+    },
+    dashes: e.style === 'dashed' ? [6, 4] : false,
+    width: e.style === 'dashed' ? 1.5 : 2,
+    smooth: { enabled: true, type: 'cubicBezier', roundness: 0.4 },
+  }));
+
+  if (rmNetwork) { rmNetwork.destroy(); rmNetwork = null; }
+
+  const treeEl = document.getElementById('rm-tree');
+  rmNetwork = new vis.Network(treeEl, {
+    nodes: new vis.DataSet(nodes),
+    edges: new vis.DataSet(edges),
+  }, {
+    layout: {
+      hierarchical: {
+        enabled: true,
+        direction: 'UD',
+        sortMethod: 'directed',
+        levelSeparation: 100,
+        nodeSpacing: 160,
+        treeSpacing: 200,
+        blockShifting: true,
+        edgeMinimization: true,
+        parentCentralization: true,
+      },
+    },
+    physics: {
+      enabled: false,
+    },
+    interaction: {
+      hover: true,
+      tooltipDelay: 100,
+      navigationButtons: true,
+      keyboard: { enabled: true },
+      zoomView: true,
+      dragView: true,
+    },
+    nodes: {
+      shape: 'box',
+      borderWidth: 2,
+    },
+    edges: {
+      smooth: { enabled: true, type: 'cubicBezier' },
+    },
+  });
+
+  // Click node → show popover
+  rmNetwork.on('click', (params) => {
+    // Remove existing popover
+    document.querySelectorAll('.rm-popover').forEach(el => el.remove());
+
+    if (params.nodes.length === 1) {
+      const nodeId = params.nodes[0];
+      const nodeData = nodes.find(n => n.id === nodeId);
+      if (!nodeData) return;
+
+      const type = nodeData._rmType;
+      const style = RM_NODE_STYLES[type] || RM_NODE_STYLES.Skill;
+      const canvasRect = treeEl.getBoundingClientRect();
+      const domPos = params.pointer.DOM;
+
+      const pop = document.createElement('div');
+      pop.className = 'rm-popover';
+      pop.style.left = (domPos.x + 16) + 'px';
+      pop.style.top = (domPos.y - 10) + 'px';
+      pop.innerHTML = `
+        <span class="rm-pop-type" style="background:${style.bg}">${type}</span>
+        <h4>${nodeData.label.split('\n')[0]}</h4>
+        ${nodeData._rmMeta ? `<div class="rm-pop-meta">${nodeData._rmMeta}</div>` : ''}
+      `;
+      treeEl.style.position = 'relative';
+      treeEl.appendChild(pop);
+
+      // Auto-remove on next click anywhere
+      setTimeout(() => {
+        const remover = () => { pop.remove(); document.removeEventListener('click', remover); };
+        document.addEventListener('click', remover);
+      }, 50);
+    }
+  });
+}
+
+document.getElementById('rm-gen-course').addEventListener('click', async () => {
+  const v = document.getElementById('rm-course-sel').value;
+  if (!v) { alert('Chọn Course trước.'); return; }
+  document.getElementById('rm-canvas').innerHTML = '<div style="padding:40px;text-align:center;color:#64748b;font-size:16px">Đang tạo roadmap...</div>';
+  try {
+    const r = await fetch(`/api/roadmap/by-course/${encodeURIComponent(v)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    renderRoadmap(await r.json());
+  } catch (e) {
+    document.getElementById('rm-canvas').innerHTML = `<div style="padding:40px;text-align:center;color:#ef4444">Lỗi: ${e.message}</div>`;
+  }
+});
+
+document.getElementById('rm-gen-topic').addEventListener('click', async () => {
+  const v = document.getElementById('rm-topic-sel').value;
+  if (!v) { alert('Chọn Topic trước.'); return; }
+  document.getElementById('rm-canvas').innerHTML = '<div style="padding:40px;text-align:center;color:#64748b;font-size:16px">Đang tạo roadmap...</div>';
+  try {
+    const r = await fetch(`/api/roadmap/by-topic/${encodeURIComponent(v)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    renderRoadmap(await r.json());
+  } catch (e) {
+    document.getElementById('rm-canvas').innerHTML = `<div style="padding:40px;text-align:center;color:#ef4444">Lỗi: ${e.message}</div>`;
+  }
+});
+
+// ===========================================================
+// EXPORT DATA
+// ===========================================================
+function setExportOutput(text) {
+  document.getElementById('exp-output').textContent = text;
+}
+
+async function loadExportStats() {
+  try {
+    const r = await fetch('/api/export/stats');
+    const stats = await r.json();
+
+    // Populate node checklist
+    const nodeList = document.getElementById('exp-node-list');
+    nodeList.innerHTML = '';
+    for (const [label, count] of Object.entries(stats.nodes)) {
+      const item = document.createElement('label');
+      item.className = 'export-check-item';
+      item.innerHTML = `<input type="checkbox" value="${label}" /> ${label} <span class="count">(${count})</span>`;
+      nodeList.appendChild(item);
+    }
+
+    // Populate relationship checklist
+    const relList = document.getElementById('exp-rel-list');
+    relList.innerHTML = '';
+    for (const [rtype, count] of Object.entries(stats.relationships)) {
+      const item = document.createElement('label');
+      item.className = 'export-check-item';
+      item.innerHTML = `<input type="checkbox" value="${rtype}" /> ${rtype} <span class="count">(${count})</span>`;
+      relList.appendChild(item);
+    }
+
+    // Populate single node label dropdown
+    const sel = document.getElementById('exp-single-label');
+    sel.innerHTML = '';
+    for (const label of Object.keys(stats.nodes)) {
+      sel.appendChild(new Option(label, label));
+    }
+  } catch (e) {
+    console.warn('[export] Failed to load stats:', e);
+  }
+}
+
+function downloadBlob(content, filename, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// Full JSON export
+document.getElementById('exp-full-json').addEventListener('click', async () => {
+  setExportOutput('Exporting full graph as JSON...');
+  try {
+    const r = await fetch('/api/export/full');
+    const data = await r.json();
+    const text = JSON.stringify(data, null, 2);
+    setExportOutput(text);
+    downloadBlob(text, 'graph_full_export.json', 'application/json');
+  } catch (e) {
+    setExportOutput('Error: ' + e.message);
+  }
+});
+
+// Full Cypher export
+document.getElementById('exp-full-cypher').addEventListener('click', async () => {
+  setExportOutput('Exporting as Cypher statements...');
+  try {
+    const r = await fetch('/api/export/cypher');
+    const text = await r.text();
+    setExportOutput(text || '(no data)');
+    downloadBlob(text, 'graph_export.cypher', 'text/plain');
+  } catch (e) {
+    setExportOutput('Error: ' + e.message);
+  }
+});
+
+// Export selected nodes
+document.getElementById('exp-nodes-go').addEventListener('click', async () => {
+  const checked = Array.from(document.querySelectorAll('#exp-node-list input:checked')).map(cb => cb.value);
+  if (!checked.length) { alert('Chọn ít nhất 1 label.'); return; }
+  const fmt = document.getElementById('exp-node-fmt').value;
+  setExportOutput(`Exporting ${checked.length} label(s) as ${fmt.toUpperCase()}...`);
+
+  try {
+    if (fmt === 'json') {
+      const allData = {};
+      for (const label of checked) {
+        const r = await fetch(`/api/export/nodes/${label}?fmt=json`);
+        allData[label] = await r.json();
+      }
+      const text = JSON.stringify(allData, null, 2);
+      setExportOutput(text);
+      downloadBlob(text, 'nodes_export.json', 'application/json');
+    } else if (fmt === 'csv') {
+      let allCsv = '';
+      for (const label of checked) {
+        const r = await fetch(`/api/export/nodes/${label}?fmt=csv`);
+        const text = await r.text();
+        allCsv += `── nodes_${label}.csv ──\n${text}\n\n`;
+        downloadBlob(text, `nodes_${label}.csv`, 'text/csv');
+      }
+      setExportOutput(allCsv.trim());
+    } else {
+      // cypher
+      const allData = {};
+      for (const label of checked) {
+        const r = await fetch(`/api/export/nodes/${label}?fmt=json`);
+        allData[label] = await r.json();
+      }
+      const lines = [];
+      for (const [label, rows] of Object.entries(allData)) {
+        for (const row of rows) {
+          const props = Object.entries(row).map(([k, v]) => `${k}: ${typeof v === 'string' ? "'" + v.replace(/'/g, "\\'") + "'" : v}`).join(', ');
+          lines.push(`MERGE (n:\`${label}\` {${props}});`);
+        }
+      }
+      const text = lines.join('\n');
+      setExportOutput(text || '(no data)');
+      downloadBlob(text, 'nodes_export.cypher', 'text/plain');
+    }
+  } catch (e) {
+    setExportOutput('Error: ' + e.message);
+  }
+});
+
+// Export selected relationships
+document.getElementById('exp-rels-go').addEventListener('click', async () => {
+  const checked = Array.from(document.querySelectorAll('#exp-rel-list input:checked')).map(cb => cb.value);
+  if (!checked.length) { alert('Chọn ít nhất 1 relationship type.'); return; }
+  const fmt = document.getElementById('exp-rel-fmt').value;
+  setExportOutput(`Exporting ${checked.length} rel type(s) as ${fmt.toUpperCase()}...`);
+
+  try {
+    if (fmt === 'json') {
+      const allData = {};
+      for (const rtype of checked) {
+        const r = await fetch(`/api/export/relationships/${rtype}?fmt=json`);
+        allData[rtype] = await r.json();
+      }
+      const text = JSON.stringify(allData, null, 2);
+      setExportOutput(text);
+      downloadBlob(text, 'rels_export.json', 'application/json');
+    } else if (fmt === 'csv') {
+      let allCsv = '';
+      for (const rtype of checked) {
+        const r = await fetch(`/api/export/relationships/${rtype}?fmt=csv`);
+        const text = await r.text();
+        allCsv += `── rels_${rtype}.csv ──\n${text}\n\n`;
+        downloadBlob(text, `rels_${rtype}.csv`, 'text/csv');
+      }
+      setExportOutput(allCsv.trim());
+    } else {
+      // cypher
+      const allData = {};
+      for (const rtype of checked) {
+        const r = await fetch(`/api/export/relationships/${rtype}?fmt=json`);
+        allData[rtype] = await r.json();
+      }
+      const lines = [];
+      for (const [rtype, rows] of Object.entries(allData)) {
+        for (const row of rows) {
+          const { start_label, start_id, end_label, end_id, ...relProps } = row;
+          const rpStr = Object.keys(relProps).length
+            ? ' {' + Object.entries(relProps).map(([k, v]) => `${k}: ${typeof v === 'string' ? "'" + v.replace(/'/g, "\\'") + "'" : v}`).join(', ') + '}'
+            : '';
+          lines.push(`MATCH (s:\`${start_label}\`), (e:\`${end_label}\`) WHERE s.id = '${start_id}' AND e.id = '${end_id}' MERGE (s)-[:\`${rtype}\`${rpStr}]->(e);`);
+        }
+      }
+      const text = lines.join('\n');
+      setExportOutput(text || '(no data)');
+      downloadBlob(text, 'rels_export.cypher', 'text/plain');
+    }
+  } catch (e) {
+    setExportOutput('Error: ' + e.message);
+  }
+});
+
+// Single node dump
+document.getElementById('exp-single-go').addEventListener('click', async () => {
+  const label = document.getElementById('exp-single-label').value;
+  const nodeId = document.getElementById('exp-single-id').value.trim();
+  if (!label || !nodeId) { alert('Chọn label và nhập ID.'); return; }
+  setExportOutput('Loading...');
+  try {
+    const r = await fetch(`/api/export/node/${label}/${encodeURIComponent(nodeId)}`);
+    if (!r.ok) {
+      const err = await r.json();
+      setExportOutput('Error: ' + (err.detail || r.statusText));
+      return;
+    }
+    const data = await r.json();
+    setExportOutput(JSON.stringify(data, null, 2));
+  } catch (e) {
+    setExportOutput('Error: ' + e.message);
+  }
+});
+
+// Copy button
+document.getElementById('exp-copy').addEventListener('click', () => {
+  const text = document.getElementById('exp-output').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('exp-copy');
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+  });
 });
 
 bootstrap();

@@ -1,0 +1,4 @@
+a_skill_id,b_skill_id,weight,relational_type
+SKILL-REACT,SKILL-NEXTJS,0.9,complementary
+SKILL-NODEJS,SKILL-DOCKER,0.7,complementary
+SKILL-HTML,SKILL-CSS,0.85,complementary

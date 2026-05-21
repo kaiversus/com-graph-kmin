@@ -1,0 +1,14 @@
+id,name,description,level
+SKILL-HTML,HTML5,Ngon ngu danh dau sieu van ban,foundational
+SKILL-CSS,CSS3,Dinh dang giao dien web,foundational
+SKILL-GIT,Git Version Control,Quan ly phien ban ma nguon,foundational
+SKILL-JS,JavaScript ES6+,Ngon ngu lap trinh web,beginner
+SKILL-RESPONSIVE,Responsive Design,Thiet ke tuong thich nhieu man hinh,beginner
+SKILL-REACT,React.js,Thu vien xay dung UI component,intermediate
+SKILL-NODEJS,Node.js,Runtime JavaScript phia server,intermediate
+SKILL-SQL,SQL Queries,Truy van co so du lieu quan he,intermediate
+SKILL-API,REST API Design,Thiet ke API theo chuan REST,intermediate
+SKILL-NEXTJS,Next.js,Framework React full-stack,advance
+SKILL-DOCKER,Docker,Container hoa ung dung,advance
+SKILL-AUTH,OAuth and JWT,Xac thuc va phan quyen,advance
+SKILL-DEPLOY,CI/CD and Deployment,Trien khai tu dong,expert

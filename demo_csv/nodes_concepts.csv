@@ -1,0 +1,7 @@
+id,name,description
+CONCEPT-HTTP,HTTP Protocol,Giao thuc truyen tai sieu van ban
+CONCEPT-REST,RESTful API,Kien truc API theo chuan REST
+CONCEPT-DOM,DOM Manipulation,Thao tac voi Document Object Model
+CONCEPT-SQL,SQL Language,Ngon ngu truy van co so du lieu
+CONCEPT-MVC,MVC Pattern,Mo hinh Model-View-Controller
+CONCEPT-AUTH,Authentication,Xac thuc nguoi dung

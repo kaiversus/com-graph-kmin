@@ -1,0 +1,3 @@
+a_concept_id,b_concept_id,weight,relational_type
+CONCEPT-HTTP,CONCEPT-REST,0.85,complementary
+CONCEPT-SQL,CONCEPT-MVC,0.5,complementary

@@ -18,7 +18,7 @@ from app.config import (
     NODE_LABELS,
     primary_key_of,
 )
-from app.routers import option1, option2, meta
+from app.routers import option1, option2, meta, recommend
 
 
 @asynccontextmanager
@@ -68,6 +68,7 @@ templates = Jinja2Templates(directory=str(_BASE / "templates"))
 app.include_router(option1.router)
 app.include_router(option2.router)
 app.include_router(meta.router)
+app.include_router(recommend.router)
 
 
 @app.get("/", response_class=HTMLResponse)

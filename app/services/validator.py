@@ -131,6 +131,15 @@ def validate_relationship_record(rel_type: str, record: dict, row_index: int = 0
             "message": f"{rel_type} requires same start_label and end_label (got {start_label}/{end_label})",
         })
 
+    # Self-loop: không quan hệ nào trong schema mà tự trỏ vào mình lại có nghĩa
+    # (Skill REQUIRES chính nó, Concept PARENT_OF chính nó...).
+    if start_label and start_label == end_label and start_id and start_id == end_id:
+        errors.append({
+            "row": row_index,
+            "field": "_self_loop",
+            "message": f"{rel_type}: start và end là cùng một node ({start_label}:{start_id})",
+        })
+
     if not start_id or not _ID_RE.match(str(start_id)):
         errors.append({"row": row_index, "field": "start_id", "message": "Invalid start_id format"})
     if not end_id or not _ID_RE.match(str(end_id)):

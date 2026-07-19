@@ -18,6 +18,7 @@
   <nav class="tabs">
     <button data-tab="opt1" class="tab active">Option 1 · Single entity</button>
     <button data-tab="opt2" class="tab">Option 2 · CSV bulk</button>
+    <button data-tab="build" class="tab">Guided Build</button>
     <button data-tab="audit" class="tab">Audit · Restore</button>
     <button data-tab="viz" class="tab">Visualizer</button>
     <button data-tab="roadmap" class="tab">Roadmap</button>
@@ -80,6 +81,95 @@
     </details>
 
     <div id="opt2-result" class="result-box"></div>
+  </section>
+
+  <!-- ========== GUIDED BUILD ========== -->
+  <section id="build" class="panel">
+    <h2>Guided Build — dựng cây theo schema</h2>
+    <p class="hint">
+      Chọn 1 node gốc → hệ thống liệt kê các loại node con hợp lệ theo schema để tick chọn.
+      Mỗi mục có thể tạo node mới (gõ tay data) hoặc link vào node đã có.
+      Click node trong Draft để mở rộng sâu hơn. Commit 1 lần cho cả cây.
+    </p>
+
+    <div class="rb-layout">
+      <div class="rb-main">
+        <!-- Bước 1: chọn root -->
+        <div class="rb-card" id="rb-root-card">
+          <h3>1 · Node gốc</h3>
+          <div class="row">
+            <label>Label</label>
+            <select id="rb-root-label"></select>
+            <label style="min-width:auto">
+              <input type="radio" name="rb-root-mode" value="new" checked /> Tạo mới
+            </label>
+            <label style="min-width:auto">
+              <input type="radio" name="rb-root-mode" value="existing" /> Dùng node có sẵn
+            </label>
+          </div>
+          <div id="rb-root-new" class="props-grid"></div>
+          <div id="rb-root-existing" style="display:none">
+            <div class="row">
+              <input id="rb-root-search" placeholder="Gõ để tìm node…" />
+              <select id="rb-root-pick"><option value="">-- chọn --</option></select>
+            </div>
+          </div>
+          <div class="actions">
+            <button id="rb-start" type="button">Bắt đầu</button>
+          </div>
+        </div>
+
+        <!-- Bước 2: graph quanh root -->
+        <div class="rb-card" id="rb-checklist-card" style="display:none">
+          <h3>2 · Gắn thêm gì vào <span id="rb-focus-name" class="rb-focus-name"></span>?</h3>
+          <p class="hint" id="rb-focus-meta"></p>
+
+          <div class="rb-graph-legend">
+            <span class="rb-lg"><span class="rb-sw rb-sw-root"></span> Node đang chọn</span>
+            <span class="rb-lg"><span class="rb-sw rb-sw-exist"></span> Đã có trong DB</span>
+            <span class="rb-lg"><span class="rb-sw rb-sw-draft"></span> Mới thêm (draft)</span>
+            <span class="rb-lg"><span class="rb-sw rb-sw-ghost"></span> Có thể thêm — click để nhập</span>
+          </div>
+
+          <div id="rb-graph" class="rb-graph"></div>
+          <div id="rb-rel-hint" class="rb-rel-hint" style="display:none"></div>
+          <div class="rb-graph-bar">
+            <p class="hint" id="rb-graph-note"></p>
+            <button id="rb-add-rel" type="button" class="rb-addrel-btn">
+              + Nối quan hệ giữa 2 node trên graph
+            </button>
+          </div>
+
+          <!-- Box nhập, hiện sau khi click 1 nhánh -->
+          <div id="rb-form-box" class="rb-form-box" style="display:none">
+            <div class="rb-form-head">
+              <div>
+                <strong id="rb-form-title"></strong>
+                <span class="hint" id="rb-form-sub"></span>
+              </div>
+              <button id="rb-form-close" type="button" class="rb-form-close">×</button>
+            </div>
+            <div id="rb-form-body"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Draft sidebar -->
+      <aside class="rb-side">
+        <h3>Draft <span id="rb-count" class="rb-count">0 node · 0 quan hệ</span></h3>
+        <p class="hint">Chưa ghi vào DB. Toàn cảnh cây đang dựng:</p>
+        <div id="rb-draft-graph" class="rb-draft-graph"></div>
+        <p class="hint">Bấm 1 dòng bên dưới để mở rộng tiếp từ node đó.</p>
+        <div id="rb-tree" class="rb-tree">
+          <p class="hint">Chưa có gì trong draft.</p>
+        </div>
+        <div class="actions">
+          <button id="rb-commit" type="button" disabled>Commit cả cây</button>
+          <button id="rb-clear" type="button" class="danger">Xoá draft</button>
+        </div>
+        <div id="rb-result" class="result-box"></div>
+      </aside>
+    </div>
   </section>
 
   <!-- ========== AUDIT ========== -->

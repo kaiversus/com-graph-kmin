@@ -5,6 +5,7 @@ Trước mỗi import, query toàn bộ node và relationship sẽ bị overwrit
 theo (label, id), serialize ra JSON và lưu vào audit log.
 """
 import json
+import uuid
 from typing import Any
 from neo4j import Transaction
 from app.config import NODE_LABELS, RELATIONSHIP_SCHEMA, primary_key_of
@@ -45,30 +46,46 @@ def snapshot_relationships(tx: Transaction, targets: list[dict]) -> list[dict]:
     Snapshot existing relationships that match (rel_type, start_label, start_id, end_label, end_id).
 
     `targets`: list of dicts with keys rel_type, start_label, start_id, end_label, end_id.
+
+    Grouped by (rel_type, start_label, end_label) so each group is one UNWIND
+    query instead of one query per relationship — same reason as snapshot_nodes:
+    on Aura every round-trip costs 100-300ms, and an import touching 500 rels
+    would otherwise spend a minute here before writing anything.
     """
     snap: list[dict] = []
+
+    by_shape: dict[tuple[str, str, str], list[dict]] = {}
     for t in targets:
         rt = t["rel_type"]
-        if rt not in RELATIONSHIP_SCHEMA:
-            continue
         s_label = t["start_label"]
         e_label = t["end_label"]
+        if rt not in RELATIONSHIP_SCHEMA:
+            continue
         if s_label not in NODE_LABELS or e_label not in NODE_LABELS:
             continue
+        by_shape.setdefault((rt, s_label, e_label), []).append(
+            {"start_id": t["start_id"], "end_id": t["end_id"]}
+        )
+
+    for (rt, s_label, e_label), rows in by_shape.items():
         s_pk = primary_key_of(s_label)
         e_pk = primary_key_of(e_label)
+        # Rows whose relationship doesn't exist yet simply don't match and drop
+        # out — that absence is what tells restore() to delete rather than revert.
         query = (
-            f"MATCH (s:`{s_label}` {{`{s_pk}`: $s_id}})-[r:`{rt}`]->(e:`{e_label}` {{`{e_pk}`: $e_id}}) "
-            "RETURN properties(r) AS props"
+            "UNWIND $rows AS row "
+            f"MATCH (s:`{s_label}` {{`{s_pk}`: row.start_id}})"
+            f"-[r:`{rt}`]->"
+            f"(e:`{e_label}` {{`{e_pk}`: row.end_id}}) "
+            "RETURN row.start_id AS s_id, row.end_id AS e_id, properties(r) AS props"
         )
-        result = tx.run(query, s_id=t["start_id"], e_id=t["end_id"])
-        for record in result:
+        for record in tx.run(query, rows=rows):
             snap.append({
                 "rel_type": rt,
                 "start_label": s_label,
-                "start_id": t["start_id"],
+                "start_id": record["s_id"],
                 "end_label": e_label,
-                "end_id": t["end_id"],
+                "end_id": record["e_id"],
                 "properties": dict(record["props"]),
             })
     return snap
@@ -88,7 +105,6 @@ def write_audit_log(
     Create an AuditLog node with snapshot data.
     Returns the audit log id.
     """
-    import uuid
     audit_id = f"audit-{uuid.uuid4().hex[:12]}"
     query = """
     CREATE (a:AuditLog {

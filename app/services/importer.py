@@ -4,8 +4,8 @@ Importer.
 Builds parameterized Cypher (whitelisted label/type) and runs MERGE inside
 a single Neo4j transaction with full snapshot + rollback on error.
 """
-from typing import Any
-from neo4j import Transaction, ManagedTransaction
+import json
+from neo4j import ManagedTransaction
 from app.config import (
     get_driver,
     NEO4J_DATABASE,
@@ -62,34 +62,6 @@ def merge_relationships_unwind_cypher(rel_type: str, start_label: str, end_label
         f"MERGE (s)-[r:`{rel_type}`]->(e) "
         f"SET r += row.props "
         f"RETURN count(r) AS cnt"
-    )
-
-
-# Legacy single-row generators kept for backward compat (validator imports them via tests)
-def merge_node_cypher(label: str) -> str:
-    if label not in NODE_LABELS:
-        raise ValueError(f"Label '{label}' not whitelisted")
-    pk = primary_key_of(label)
-    return (
-        f"MERGE (n:`{label}` {{`{pk}`: $pk_value}}) "
-        f"SET n += $props "
-        f"RETURN n.`{pk}` AS pk, labels(n) AS labels"
-    )
-
-
-def merge_relationship_cypher(rel_type: str, start_label: str, end_label: str) -> str:
-    if rel_type not in RELATIONSHIP_SCHEMA:
-        raise ValueError(f"Relationship '{rel_type}' not whitelisted")
-    if start_label not in NODE_LABELS or end_label not in NODE_LABELS:
-        raise ValueError("Start/end label not whitelisted")
-    s_pk = primary_key_of(start_label)
-    e_pk = primary_key_of(end_label)
-    return (
-        f"MATCH (s:`{start_label}` {{`{s_pk}`: $s_id}}), "
-        f"(e:`{end_label}` {{`{e_pk}`: $e_id}}) "
-        f"MERGE (s)-[r:`{rel_type}`]->(e) "
-        f"SET r += $props "
-        f"RETURN type(r) AS type"
     )
 
 
@@ -214,7 +186,6 @@ def run_import(actor: str, option: str, nodes: list[dict], relationships: list[d
 
 def _do_restore(tx: ManagedTransaction, audit_id: str) -> dict:
     """Read snapshot from AuditLog and restore nodes/rels to their pre-import state."""
-    import json
     record = tx.run(
         "MATCH (a:AuditLog {id: $id}) RETURN a.snapshot_nodes AS sn, "
         "a.snapshot_rels AS sr, a.payload_summary AS ps, a.status AS status",

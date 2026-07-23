@@ -60,4 +60,37 @@ function collectProps(container) {
   return out;
 }
 
-export { showResult, makeInput, collectProps };
+// ---- Nút phóng to graph ra toàn màn hình ----
+// wrap = div .graph-zoom-wrap bọc ngoài container vis. getNetwork() trả
+// instance vis.Network hiện tại (truyền hàm vì network hay bị destroy/tạo lại).
+function attachGraphZoom(wrap, getNetwork) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'graph-zoom-btn';
+  btn.title = 'Phóng to toàn màn hình (Esc để thoát)';
+  btn.textContent = '⛶';
+  wrap.appendChild(btn);
+
+  const toggle = () => {
+    const fs = wrap.classList.toggle('graph-zoom-fs');
+    document.body.classList.toggle('graph-zoom-lock', fs);
+    btn.textContent = fs ? '✕' : '⛶';
+    btn.title = fs ? 'Thu nhỏ lại (Esc)' : 'Phóng to toàn màn hình (Esc để thoát)';
+    // vis không tự biết container đổi cỡ khi đổi CSS — phải bảo nó vẽ lại
+    setTimeout(() => {
+      const net = getNetwork();
+      if (net) { net.redraw(); net.fit(); }
+    }, 50);
+  };
+  btn.addEventListener('click', toggle);
+  wrap._zoomToggle = toggle;  // cho handler Esc toàn cục bên dưới gọi
+}
+
+// 1 listener Esc duy nhất cho mọi graph (core.js chỉ chạy 1 lần, không leak
+// dù attachGraphZoom được gọi lại mỗi lần Visualizer render)
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  document.querySelectorAll('.graph-zoom-fs').forEach(w => w._zoomToggle && w._zoomToggle());
+});
+
+export { showResult, makeInput, collectProps, attachGraphZoom };

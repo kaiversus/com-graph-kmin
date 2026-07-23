@@ -852,3 +852,48 @@ th { background: #f1f5f9; font-weight: 600; }
   display: flex; align-items: center; justify-content: center;
   height: 100%; font-size: 12px; color: var(--muted);
 }
+
+/* ===== Nút phóng to graph toàn màn hình ===== */
+.graph-zoom-wrap { position: relative; }
+.graph-zoom-btn {
+  position: absolute; top: 8px; right: 8px; z-index: 30;
+  width: 32px; height: 32px; padding: 0;
+  font-size: 16px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, 0.92); color: #334155;
+  border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+}
+.graph-zoom-btn:hover { background: #fff; border-color: var(--primary); color: var(--primary); }
+.graph-zoom-fs {
+  position: fixed; inset: 0; z-index: 999;
+  background: #fff; padding: 12px;
+}
+.graph-zoom-fs .rb-graph,
+.graph-zoom-fs .rb-draft-graph,
+.graph-zoom-fs #viz-net {
+  height: 100%; margin: 0;
+}
+.graph-zoom-fs .graph-zoom-btn { top: 20px; right: 20px; }
+.graph-zoom-lock { overflow: hidden; }
+
+/* Fullscreen guided build = workspace: legend / hint / thanh nút / form nổi
+   trên graph, thao tác y như ngoài */
+.graph-zoom-fs .rb-graph-legend {
+  position: absolute; top: 20px; left: 24px; z-index: 25; margin: 0;
+  background: rgba(255, 255, 255, 0.95); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 12px;
+}
+.graph-zoom-fs .rb-rel-hint {
+  position: absolute; top: 64px; left: 24px; z-index: 25;
+  max-width: 440px; margin: 0;
+}
+.graph-zoom-fs .rb-graph-bar {
+  position: absolute; bottom: 20px; left: 24px; z-index: 25; margin: 0;
+  background: rgba(255, 255, 255, 0.95); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 12px;
+}
+.graph-zoom-fs .rb-form-box {
+  position: absolute; top: 64px; right: 24px; z-index: 25; margin: 0;
+  width: 400px; max-height: calc(100% - 96px); overflow-y: auto;
+  background: #fff; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+}

@@ -1,5 +1,6 @@
 // ===== Visualizer — vis-network, du lieu qua /api/graph =====
 // `vis` la bien global do vis-network.min.js (UMD) tao ra trong index.html.
+import { attachGraphZoom } from './core.js';
 
 let vizNetwork = null;
 const LABEL_COLORS = {
@@ -108,7 +109,8 @@ function renderGraphView(data) {
     </div>
   `;
 
-  container.innerHTML = legendHTML + '<div id="viz-net"></div>';
+  // Wrap tạo lại mỗi lần render nên gắn lại nút zoom bên dưới cũng không leak
+  container.innerHTML = legendHTML + '<div class="graph-zoom-wrap"><div id="viz-net"></div></div>';
 
   if (vizNetwork) { vizNetwork.destroy(); vizNetwork = null; }
 
@@ -128,9 +130,12 @@ function renderGraphView(data) {
         edges: { shadow: false },
       }
     );
+    // Xếp xong tắt hẳn physics: kéo node nào chỉ node đó chạy, không lôi cả
+    // chùm theo, sắp tay xong node đứng yên chỗ đó.
     vizNetwork.on('stabilizationIterationsDone', () => {
-      vizNetwork.setOptions({ physics: { stabilization: false } });
+      vizNetwork.setOptions({ physics: false });
     });
+    attachGraphZoom(netEl.parentElement, () => vizNetwork);
 
     // Node click → show properties in side panel
     vizNetwork.on('click', (params) => {

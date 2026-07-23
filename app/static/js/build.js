@@ -1,5 +1,5 @@
 // ===== Guided Build — checklist theo schema, commit ca cay 1 lan =====
-import { SCHEMA, showResult, makeInput, collectProps } from './core.js';
+import { SCHEMA, setSchema, showResult, makeInput, collectProps, attachGraphZoom } from './core.js';
 
 const RB = {
   items: {},    // ref -> { ref, label, name, isNew, props, parentRef, viaRel }
@@ -46,8 +46,11 @@ async function rbInit() {
   if (RB.labels.length) return;
   // bootstrap() chạy async lúc load trang; nếu admin bấm tab này ngay thì
   // SCHEMA có thể chưa có → makeInput sẽ nổ. Đợi cho chắc.
-  if (!SCHEMA) SCHEMA = await (await fetch('/api/schema')).json();
+  // Gán thẳng vào SCHEMA (import binding) sẽ TypeError — phải qua setSchema
+  if (!SCHEMA) setSchema(await (await fetch('/api/schema')).json());
   RB.labels = await (await fetch('/api/recommend/labels')).json();
+  attachGraphZoom(document.getElementById('rb-graph-wrap'), () => RB.network);
+  attachGraphZoom(document.getElementById('rb-draft-graph-wrap'), () => RB.dNetwork);
   const sel = document.getElementById('rb-root-label');
   sel.innerHTML = '';
   RB.labels.forEach(l => sel.appendChild(new Option(l.label, l.label)));
@@ -296,7 +299,7 @@ function rbRenderGraph() {
   const container = document.getElementById('rb-graph');
 
   if (RB.network && RB.graphFocus === RB.focus) {
-    rbSyncDataSet(RB.gNodes, nodes);
+    rbSyncDataSet(RB.gNodes, nodes, `n::${item.ref}`);
     rbSyncDataSet(RB.gEdges, edges);
     return;
   }
@@ -306,18 +309,25 @@ function rbRenderGraph() {
   RB.gEdges = new vis.DataSet(edges);
   RB.graphFocus = RB.focus;
 
+  // Physics thay vì hierarchical: 1 hàng xóm có thể nối root theo cả 2 chiều
+  // (vd CONCEPT-025 vừa PARENT_OF vào vừa RELATED_TO ra) tạo vòng, mà
+  // sortMethod 'directed' gặp vòng là xếp tầng vỡ — node bị kéo ra xa, cả
+  // graph co tí lại. Ego graph toả tròn quanh root như tab Visualize dễ đọc hơn.
   RB.network = new vis.Network(container, { nodes: RB.gNodes, edges: RB.gEdges }, {
-    layout: {
-      hierarchical: {
-        enabled: true, direction: 'LR', sortMethod: 'directed',
-        nodeSpacing: 85, levelSeparation: 210, shakeTowards: 'roots',
-      },
+    physics: {
+      stabilization: { enabled: true, iterations: 200, updateInterval: 25 },
+      barnesHut: { gravitationalConstant: -8000, centralGravity: 0.4, springLength: 150, springConstant: 0.05, avoidOverlap: 0.6 },
     },
-    physics: { enabled: false },
     interaction: { hover: true, tooltipDelay: 150, dragNodes: true },
-    edges: { smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.4 },
+    edges: { smooth: { type: 'continuous' },
              font: { strokeWidth: 3, strokeColor: '#fff' } },
     nodes: { widthConstraint: { maximum: 130 } },
+  });
+  // Xếp xong là TẮT HẲN physics: node đứng yên tại chỗ, admin kéo node nào
+  // chỉ node đó chạy (mũi tên dãn theo), sắp xếp bằng tay không bị lò xo
+  // kéo lại. Node thêm sau được rbSyncDataSet đặt cạnh node gốc.
+  RB.network.on('stabilizationIterationsDone', () => {
+    RB.network.setOptions({ physics: false });
   });
 
   RB.network.on('click', params => {
@@ -331,10 +341,24 @@ function rbRenderGraph() {
     if (n._kind === 'ghost') rbOpenForm(n._idx);
   });
 }
-// Đồng bộ DataSet mà giữ nguyên vị trí node cũ: chỉ xoá cái mất, cập nhật cái còn
-function rbSyncDataSet(ds, arr) {
+// Đồng bộ DataSet mà giữ nguyên vị trí node cũ: chỉ xoá cái mất, cập nhật cái còn.
+// anchorId (chỉ truyền cho DataSet node): physics đã tắt nên node MỚI phải được
+// đặt tay — rải quanh node gốc, không thì vis thả nó rơi lung tung.
+function rbSyncDataSet(ds, arr, anchorId) {
   const keep = new Set(arr.map(x => x.id));
   ds.getIds().forEach(id => { if (!keep.has(id)) ds.remove(id); });
+  if (anchorId && RB.network) {
+    const have = new Set(ds.getIds());
+    const fresh = arr.filter(x => !have.has(x.id));
+    if (fresh.length) {
+      const pos = RB.network.getPositions([anchorId])[anchorId];
+      if (pos) fresh.forEach((x, i) => {
+        const a = (2 * Math.PI * i) / fresh.length + 0.5;
+        x.x = pos.x + 180 * Math.cos(a);
+        x.y = pos.y + 180 * Math.sin(a);
+      });
+    }
+  }
   ds.update(arr);
 }
 
@@ -475,7 +499,8 @@ function rbOpenForm(idx) {
     rbRenderTree();
   });
   body.appendChild(addBtn);
-  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  // Fullscreen thì form đã nổi trên graph, không cần (và không nên) cuộn trang
+  if (!document.querySelector('.graph-zoom-fs')) box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 
@@ -546,8 +571,14 @@ async function rbResolveRel(from, to) {
   rbRelHint(`${from.name} → ${to.name} — đang tra schema…`);
   let types = [];
   try {
-    const d = await (await fetch(
-      `/api/recommend/rel-types?start_label=${from.label}&end_label=${to.label}`)).json();
+    const p = new URLSearchParams({ start_label: from.label, end_label: to.label });
+    // Cả 2 đầu đều là node thật trong DB → server tra luôn loại nào đã nối sẵn
+    const isReal = x => !RB.items[x.ref] || !RB.items[x.ref].isNew;
+    if (isReal(from) && isReal(to)) {
+      p.set('start_id', from.ref);
+      p.set('end_id', to.ref);
+    }
+    const d = await (await fetch(`/api/recommend/rel-types?${p}`)).json();
     types = d.rel_types || [];
   } catch (e) {
     rbRelHint(`Lỗi tra schema: ${e}`, 'warn');
@@ -556,6 +587,14 @@ async function rbResolveRel(from, to) {
 
   if (!types.length) {
     rbRelHint(`Schema không cho ${from.label} → ${to.label}. Chọn node đích khác.`, 'warn');
+    return;
+  }
+
+  // Mọi loại quan hệ hợp lệ đều đã có trong DB → khỏi mở form, báo luôn
+  if (types.every(t => t.exists_in_db)) {
+    rbRelHint(
+      `${from.name} → ${to.name} đã nối sẵn trong DB (${types.map(t => t.rel_type).join(', ')}). Không cần thêm lại.`,
+      'warn');
     return;
   }
 
@@ -582,7 +621,15 @@ function rbRelChoiceForm(from, to, types) {
   relRow.className = 'row';
   relRow.innerHTML = '<label>Quan hệ</label>';
   const relSel = document.createElement('select');
-  types.forEach(r => relSel.appendChild(new Option(r.rel_type, r.rel_type)));
+  types.forEach(r => {
+    const o = new Option(
+      r.exists_in_db ? `${r.rel_type} — đã có trong DB` : r.rel_type, r.rel_type);
+    if (r.exists_in_db) o.disabled = true;
+    relSel.appendChild(o);
+  });
+  // Option đầu có thể bị disable — nhảy tới loại đầu tiên còn nối được
+  const firstFree = types.find(r => !r.exists_in_db);
+  if (firstFree) relSel.value = firstFree.rel_type;
   relRow.appendChild(relSel);
   body.appendChild(relRow);
 
@@ -632,7 +679,8 @@ function rbRelChoiceForm(from, to, types) {
     rbAddRel(from, to, r.rel_type, props);
   });
   body.appendChild(addBtn);
-  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  // Fullscreen thì form đã nổi trên graph, không cần (và không nên) cuộn trang
+  if (!document.querySelector('.graph-zoom-fs')) box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function rbAddRel(from, to, relType, props) {
@@ -728,16 +776,33 @@ function rbRenderDraftGraph() {
     font: { size: 9, color: '#15803d', strokeWidth: 3, strokeColor: '#fff' },
   })).filter(e => RB.items[e.from] && RB.items[e.to]);
 
+  // sortMethod 'directed' xếp tầng vỡ khi draft có vòng (vd nối A→B rồi B→A).
+  // Cây bình thường thì hierarchical đẹp hơn, nên chỉ khi có vòng mới rơi về physics.
+  const adj = {};
+  edges.forEach(e => (adj[e.from] = adj[e.from] || []).push(e.to));
+  const state = {};  // 1 = đang thăm trên stack DFS, 2 = đã xong
+  const visit = id => {
+    if (state[id] === 1) return true;
+    if (state[id] === 2) return false;
+    state[id] = 1;
+    const cyc = (adj[id] || []).some(visit);
+    state[id] = 2;
+    return cyc;
+  };
+  const hasCycle = nodes.some(n => visit(n.id));
+
   const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
   if (RB.dNetwork) { RB.dNetwork.destroy(); RB.dNetwork = null; }
   RB.dNetwork = new vis.Network(el, data, {
-    layout: {
+    layout: hasCycle ? {} : {
       hierarchical: {
         enabled: true, direction: 'UD', sortMethod: 'directed',
         nodeSpacing: 70, levelSeparation: 70, shakeTowards: 'roots',
       },
     },
-    physics: { enabled: false },
+    physics: hasCycle
+      ? { stabilization: { enabled: true, iterations: 150 } }
+      : { enabled: false },
     interaction: {
       dragNodes: false, selectable: false, hover: false,
       zoomView: true, dragView: true,

@@ -154,19 +154,49 @@ def search_existing(
 
 
 @router.get("/rel-types")
-def get_rel_types(start_label: str, end_label: str):
+def get_rel_types(
+    start_label: str,
+    end_label: str,
+    start_id: str | None = None,
+    end_id: str | None = None,
+):
     """
     Quan he hop le noi start_label -> end_label. Dung cho thao tac noi 2 node
     da co san tren graph (khong tao node moi).
+
+    Truyen kem start_id + end_id (2 node deu da ton tai trong DB) thi moi
+    rel_type duoc gan them exists_in_db — de UI chu thich "(da co trong DB)"
+    va chan noi trung.
     """
     try:
-        return {
-            "start_label": start_label,
-            "end_label": end_label,
-            "rel_types": rel_types_between(start_label, end_label),
-        }
+        types = rel_types_between(start_label, end_label)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    if start_id and end_id and types:
+        spk = primary_key_of(start_label)
+        epk = primary_key_of(end_label)
+        driver = get_driver()
+        try:
+            with driver.session(database=NEO4J_DATABASE) as session:
+                rows = session.run(
+                    f"MATCH (s:`{start_label}` {{`{spk}`: $sid}})"
+                    f"-[r]->"
+                    f"(e:`{end_label}` {{`{epk}`: $eid}}) "
+                    "RETURN DISTINCT type(r) AS t",
+                    sid=start_id, eid=end_id,
+                ).data()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Neo4j error: {e}")
+        existing = {row["t"] for row in rows}
+        for t in types:
+            t["exists_in_db"] = t["rel_type"] in existing
+
+    return {
+        "start_label": start_label,
+        "end_label": end_label,
+        "rel_types": types,
+    }
 
 
 @router.get("/neighborhood/{label}/{node_id}")

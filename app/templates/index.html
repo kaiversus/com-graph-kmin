@@ -124,32 +124,37 @@
           <h3>2 · Gắn thêm gì vào <span id="rb-focus-name" class="rb-focus-name"></span>?</h3>
           <p class="hint" id="rb-focus-meta"></p>
 
-          <div class="rb-graph-legend">
-            <span class="rb-lg"><span class="rb-sw rb-sw-root"></span> Node đang chọn</span>
-            <span class="rb-lg"><span class="rb-sw rb-sw-exist"></span> Đã có trong DB</span>
-            <span class="rb-lg"><span class="rb-sw rb-sw-draft"></span> Mới thêm (draft)</span>
-            <span class="rb-lg"><span class="rb-sw rb-sw-ghost"></span> Có thể thêm — click để nhập</span>
-          </div>
-
-          <div id="rb-graph" class="rb-graph"></div>
-          <div id="rb-rel-hint" class="rb-rel-hint" style="display:none"></div>
-          <div class="rb-graph-bar">
-            <p class="hint" id="rb-graph-note"></p>
-            <button id="rb-add-rel" type="button" class="rb-addrel-btn">
-              + Nối quan hệ giữa 2 node trên graph
-            </button>
-          </div>
-
-          <!-- Box nhập, hiện sau khi click 1 nhánh -->
-          <div id="rb-form-box" class="rb-form-box" style="display:none">
-            <div class="rb-form-head">
-              <div>
-                <strong id="rb-form-title"></strong>
-                <span class="hint" id="rb-form-sub"></span>
-              </div>
-              <button id="rb-form-close" type="button" class="rb-form-close">×</button>
+          <!-- Wrap bọc cả legend / hint / thanh nút / form nhập: khi phóng to
+               toàn màn hình thì mọi thứ đi theo, làm việc được chứ không chỉ đọc -->
+          <div class="graph-zoom-wrap" id="rb-graph-wrap">
+            <div class="rb-graph-legend">
+              <span class="rb-lg"><span class="rb-sw rb-sw-root"></span> Node đang chọn</span>
+              <span class="rb-lg"><span class="rb-sw rb-sw-exist"></span> Đã có trong DB</span>
+              <span class="rb-lg"><span class="rb-sw rb-sw-draft"></span> Mới thêm (draft)</span>
+              <span class="rb-lg"><span class="rb-sw rb-sw-ghost"></span> Có thể thêm — click để nhập</span>
+              <span class="rb-lg rb-lg-edges">Đường nối: <b style="color:#94a3b8">xám</b> = quan hệ đã có trong DB · <b style="color:#16a34a">xanh lá</b> = mới thêm (draft) · <b style="color:#d97706">vàng đứt</b> = chưa có</span>
             </div>
-            <div id="rb-form-body"></div>
+
+            <div id="rb-graph" class="rb-graph"></div>
+            <div id="rb-rel-hint" class="rb-rel-hint" style="display:none"></div>
+            <div class="rb-graph-bar">
+              <p class="hint" id="rb-graph-note"></p>
+              <button id="rb-add-rel" type="button" class="rb-addrel-btn">
+                + Nối quan hệ giữa 2 node trên graph
+              </button>
+            </div>
+
+            <!-- Box nhập, hiện sau khi click 1 nhánh -->
+            <div id="rb-form-box" class="rb-form-box" style="display:none">
+              <div class="rb-form-head">
+                <div>
+                  <strong id="rb-form-title"></strong>
+                  <span class="hint" id="rb-form-sub"></span>
+                </div>
+                <button id="rb-form-close" type="button" class="rb-form-close">×</button>
+              </div>
+              <div id="rb-form-body"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -158,7 +163,9 @@
       <aside class="rb-side">
         <h3>Draft <span id="rb-count" class="rb-count">0 node · 0 quan hệ</span></h3>
         <p class="hint">Chưa ghi vào DB. Toàn cảnh cây đang dựng:</p>
-        <div id="rb-draft-graph" class="rb-draft-graph"></div>
+        <div class="graph-zoom-wrap" id="rb-draft-graph-wrap">
+          <div id="rb-draft-graph" class="rb-draft-graph"></div>
+        </div>
         <p class="hint">Bấm 1 dòng bên dưới để mở rộng tiếp từ node đó.</p>
         <div id="rb-tree" class="rb-tree">
           <p class="hint">Chưa có gì trong draft.</p>

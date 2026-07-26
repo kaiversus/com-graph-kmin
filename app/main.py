@@ -18,7 +18,7 @@ from app.config import (
     NODE_LABELS,
     primary_key_of,
 )
-from app.routers import audit, export, graph, meta, option1, option2, recommend, roadmap
+from app.routers import audit, crud, export, graph, meta, option1, option2, recommend, roadmap
 
 
 @asynccontextmanager
@@ -67,6 +67,7 @@ templates = Jinja2Templates(directory=str(_BASE / "templates"))
 
 app.include_router(option1.router)
 app.include_router(option2.router)
+app.include_router(crud.router)
 app.include_router(recommend.router)
 app.include_router(meta.router)
 app.include_router(audit.router)

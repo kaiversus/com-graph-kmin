@@ -48,6 +48,7 @@ header h1 { margin: 0; font-size: 22px; }
   padding: 0 32px;
   background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
   border-bottom: 1px solid #00000020;
+  flex-wrap: wrap;
 }
 .tab {
   background: rgba(255,255,255,0.15);
@@ -58,6 +59,7 @@ header h1 { margin: 0; font-size: 22px; }
   border-radius: 8px 8px 0 0;
   font-size: 14px;
   font-weight: 500;
+  white-space: nowrap;
 }
 .tab.active { background: var(--bg); color: var(--text); }
 
@@ -116,6 +118,53 @@ button.danger { background: var(--error); }
 .props-grid label { font-size: 12px; color: var(--muted); }
 .props-grid label .req { color: var(--error); }
 .props-grid input, .props-grid select { width: 100%; }
+
+/* ===== Manage tab ===== */
+.mng-layout { display: flex; gap: 16px; align-items: flex-start; }
+.mng-left { flex: 0 0 40%; min-width: 300px; display: flex; flex-direction: column; gap: 10px; }
+.mng-right { flex: 1; min-width: 0; }
+.mng-search { flex: 1; }
+
+.mng-list {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.mng-list-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  display: flex; justify-content: space-between; gap: 10px; align-items: center;
+}
+.mng-list-item:last-child { border-bottom: none; }
+.mng-list-item:hover { background: #f1f5f9; }
+.mng-list-item.active { background: #ede9fe; color: var(--primary-dark); font-weight: 600; }
+.mng-list-item .mid { color: var(--muted); font-size: 11px; font-weight: 400; white-space: nowrap; }
+.mng-list-empty { padding: 14px; color: var(--muted); font-size: 13px; }
+
+.mng-graph-wrap {
+  border: 1px solid var(--border); border-radius: 8px; background: #fafbff; overflow: hidden;
+}
+.mng-graph-title { padding: 6px 12px; font-size: 12px; font-weight: 600; border-bottom: 1px solid var(--border); background: #fff; }
+.mng-graph { height: 300px; }
+
+.mng-right .mng-empty {
+  color: var(--muted); font-size: 14px; padding: 40px 24px; text-align: center;
+  border: 1px dashed var(--border); border-radius: 8px;
+}
+.mng-node-head { display: flex; align-items: baseline; gap: 10px; margin: 4px 0 8px; }
+.mng-node-head .badge {
+  background: var(--primary); color: #fff; font-size: 11px; font-weight: 600;
+  padding: 2px 8px; border-radius: 10px;
+}
+
+@media (max-width: 860px) {
+  .mng-layout { flex-direction: column; }
+  .mng-left { flex: 1 1 auto; width: 100%; }
+}
 
 .rel-block {
   margin: 8px 0;

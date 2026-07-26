@@ -19,6 +19,7 @@
     <button data-tab="opt1" class="tab active">Option 1 · Single entity</button>
     <button data-tab="opt2" class="tab">Option 2 · CSV bulk</button>
     <button data-tab="build" class="tab">Guided Build</button>
+    <button data-tab="manage" class="tab">Manage · Edit/Delete</button>
     <button data-tab="audit" class="tab">Audit · Restore</button>
     <button data-tab="viz" class="tab">Visualizer</button>
     <button data-tab="roadmap" class="tab">Roadmap</button>
@@ -177,6 +178,36 @@
         <div id="rb-result" class="result-box"></div>
       </aside>
     </div>
+  </section>
+
+  <!-- ========== AUDIT ========== -->
+  <section id="manage" class="panel">
+    <h2>Manage — sửa / xoá node &amp; quan hệ</h2>
+    <p class="hint">Chọn label → tìm &amp; chọn 1 node bên trái → sửa property / quan hệ bên phải. Mọi thao tác ghi AuditLog và <strong>Restore được</strong> ở tab Audit.</p>
+
+    <div class="mng-layout">
+      <!-- Cột trái: tìm kiếm + graph -->
+      <div class="mng-left">
+        <div class="row">
+          <select id="mng-label"></select>
+          <input id="mng-search" class="mng-search" placeholder="Gõ để tìm theo tên / id…" />
+        </div>
+        <div id="mng-list" class="mng-list">
+          <div class="mng-list-empty">Đang tải…</div>
+        </div>
+        <div class="mng-graph-wrap">
+          <div class="mng-graph-title">Sơ đồ node đang chọn <span class="hint">(chỉ để nhìn)</span></div>
+          <div id="mng-graph" class="mng-graph"></div>
+        </div>
+      </div>
+
+      <!-- Cột phải: property + quan hệ -->
+      <div id="mng-detail" class="mng-right">
+        <div class="mng-empty">← Chọn 1 node bên trái để xem &amp; sửa.</div>
+      </div>
+    </div>
+
+    <div id="mng-result" class="result-box"></div>
   </section>
 
   <!-- ========== AUDIT ========== -->

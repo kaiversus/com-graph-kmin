@@ -10,6 +10,7 @@ import { renderViz, loadQuickQueryOptions } from './viz.js';
 import { loadRoadmapSources } from './roadmap.js';
 import { loadExportStats } from './export.js';
 import { rbInit } from './build.js';
+import { populateManageLabels } from './manage.js';
 
 // ---- Tabs ----
 document.querySelectorAll('.tab').forEach(btn => {
@@ -49,6 +50,7 @@ async function bootstrap() {
   setSchema(await r.json());
   populateOpt1Labels();
   populateOpt2Targets();
+  populateManageLabels();
   loadQuickQueryOptions();
 }
 

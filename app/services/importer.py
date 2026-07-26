@@ -16,9 +16,19 @@ from app.config import (
 from app.services.snapshot import (
     snapshot_nodes,
     snapshot_relationships,
+    snapshot_node_rels,
     write_audit_log,
     update_audit_status,
 )
+
+
+def _auto_ts_sets(rel_type: str) -> str:
+    """Cac clause `SET r.<prop> = datetime()` cho auto-timestamp props cua rel."""
+    return "".join(
+        f"SET r.`{p}` = datetime() "
+        for p, ps in RELATIONSHIP_SCHEMA[rel_type].get("props", {}).items()
+        if ps.get("auto") == "timestamp"
+    )
 
 
 # ---- Cypher generators (label/type whitelisted; properties parameterized) ----
@@ -57,18 +67,13 @@ def merge_relationships_unwind_cypher(rel_type: str, start_label: str, end_label
     e_pk = primary_key_of(end_label)
     # auto props (vd lastUpdatedAt) → set bằng datetime() của Neo4j = giờ server
     # tại thời điểm ghi, không lấy từ input. Chạy sau `SET r += row.props`.
-    auto_sets = "".join(
-        f"SET r.`{p}` = datetime() "
-        for p, ps in RELATIONSHIP_SCHEMA[rel_type].get("props", {}).items()
-        if ps.get("auto") == "timestamp"
-    )
     return (
         f"UNWIND $rows AS row "
         f"MATCH (s:`{start_label}` {{`{s_pk}`: row.start_id}}) "
         f"MATCH (e:`{end_label}` {{`{e_pk}`: row.end_id}}) "
         f"MERGE (s)-[r:`{rel_type}`]->(e) "
         f"SET r += row.props "
-        f"{auto_sets}"
+        f"{_auto_ts_sets(rel_type)}"
         f"RETURN count(r) AS cnt"
     )
 
@@ -189,6 +194,112 @@ def run_import(actor: str, option: str, nodes: list[dict], relationships: list[d
     return result
 
 
+# ---- CRUD: Update / Delete (transactional + snapshot + audit + rollback) -----
+#
+# Moi op deu: 1) snapshot trang thai truoc, 2) ghi AuditLog (pending),
+# 3) thuc thi, 4) danh dau committed. Loi bat ky → rollback ca transaction.
+# Restore (_do_restore) dua entity ve dung snapshot → undo duoc ca xoa.
+
+
+def _rel_summary(rel_type, s_label, s_id, e_label, e_id) -> dict:
+    return {"type": rel_type, "start": f"{s_label}:{s_id}", "end": f"{e_label}:{e_id}"}
+
+
+def _do_update_node(tx, actor, label, node_id, props) -> dict:
+    snap_nodes = snapshot_nodes(tx, [(label, node_id)])
+    if not snap_nodes:
+        raise ValueError(f"{label}:{node_id} không tồn tại")
+    payload = {"nodes": [{"label": label, "id": node_id}], "relationships": []}
+    audit_id = write_audit_log(tx, actor, "update_node", "crud", payload, snap_nodes, [], status="pending")
+    pk = primary_key_of(label)
+    # full-replace các prop đã khai (props đã gồm pk = node_id, validated)
+    tx.run(f"MERGE (n:`{label}` {{`{pk}`: $id}}) SET n = $props", id=node_id, props=props)
+    update_audit_status(tx, audit_id, "committed")
+    return {"audit_id": audit_id, "updated": f"{label}:{node_id}"}
+
+
+def _do_delete_node(tx, actor, label, node_id) -> dict:
+    snap_nodes = snapshot_nodes(tx, [(label, node_id)])
+    if not snap_nodes:
+        raise ValueError(f"{label}:{node_id} không tồn tại")
+    snap_rels = snapshot_node_rels(tx, label, node_id)
+    payload = {
+        "nodes": [{"label": label, "id": node_id}],
+        "relationships": [
+            _rel_summary(r["rel_type"], r["start_label"], r["start_id"], r["end_label"], r["end_id"])
+            for r in snap_rels
+        ],
+    }
+    audit_id = write_audit_log(tx, actor, "delete_node", "crud", payload, snap_nodes, snap_rels, status="pending")
+    pk = primary_key_of(label)
+    tx.run(f"MATCH (n:`{label}` {{`{pk}`: $id}}) DETACH DELETE n", id=node_id)
+    update_audit_status(tx, audit_id, "committed")
+    return {"audit_id": audit_id, "deleted": f"{label}:{node_id}", "rels_deleted": len(snap_rels)}
+
+
+def _do_update_rel(tx, actor, rel_type, s_label, s_id, e_label, e_id, props) -> dict:
+    target = {"rel_type": rel_type, "start_label": s_label, "start_id": s_id,
+              "end_label": e_label, "end_id": e_id}
+    snap_rels = snapshot_relationships(tx, [target])
+    if not snap_rels:
+        raise ValueError(f"Quan hệ {rel_type} {s_label}:{s_id}->{e_label}:{e_id} không tồn tại")
+    payload = {"nodes": [], "relationships": [_rel_summary(rel_type, s_label, s_id, e_label, e_id)]}
+    audit_id = write_audit_log(tx, actor, "update_rel", "crud", payload, [], snap_rels, status="pending")
+    s_pk = primary_key_of(s_label)
+    e_pk = primary_key_of(e_label)
+    # full-replace props; auto-timestamp (lastUpdatedAt) làm mới sau khi replace
+    tx.run(
+        f"MATCH (s:`{s_label}` {{`{s_pk}`: $s_id}})-[r:`{rel_type}`]->"
+        f"(e:`{e_label}` {{`{e_pk}`: $e_id}}) SET r = $props {_auto_ts_sets(rel_type)}",
+        s_id=s_id, e_id=e_id, props=props,
+    )
+    update_audit_status(tx, audit_id, "committed")
+    return {"audit_id": audit_id, "updated_rel": f"{rel_type} {s_label}:{s_id}->{e_label}:{e_id}"}
+
+
+def _do_delete_rel(tx, actor, rel_type, s_label, s_id, e_label, e_id) -> dict:
+    target = {"rel_type": rel_type, "start_label": s_label, "start_id": s_id,
+              "end_label": e_label, "end_id": e_id}
+    snap_rels = snapshot_relationships(tx, [target])
+    if not snap_rels:
+        raise ValueError(f"Quan hệ {rel_type} {s_label}:{s_id}->{e_label}:{e_id} không tồn tại")
+    payload = {"nodes": [], "relationships": [_rel_summary(rel_type, s_label, s_id, e_label, e_id)]}
+    audit_id = write_audit_log(tx, actor, "delete_rel", "crud", payload, [], snap_rels, status="pending")
+    s_pk = primary_key_of(s_label)
+    e_pk = primary_key_of(e_label)
+    tx.run(
+        f"MATCH (s:`{s_label}` {{`{s_pk}`: $s_id}})-[r:`{rel_type}`]->"
+        f"(e:`{e_label}` {{`{e_pk}`: $e_id}}) DELETE r",
+        s_id=s_id, e_id=e_id,
+    )
+    update_audit_status(tx, audit_id, "committed")
+    return {"audit_id": audit_id, "deleted_rel": f"{rel_type} {s_label}:{s_id}->{e_label}:{e_id}"}
+
+
+def run_update_node(actor, label, node_id, props) -> dict:
+    driver = get_driver()
+    with driver.session(database=NEO4J_DATABASE) as session:
+        return session.execute_write(_do_update_node, actor, label, node_id, props)
+
+
+def run_delete_node(actor, label, node_id) -> dict:
+    driver = get_driver()
+    with driver.session(database=NEO4J_DATABASE) as session:
+        return session.execute_write(_do_delete_node, actor, label, node_id)
+
+
+def run_update_rel(actor, rel_type, s_label, s_id, e_label, e_id, props) -> dict:
+    driver = get_driver()
+    with driver.session(database=NEO4J_DATABASE) as session:
+        return session.execute_write(_do_update_rel, actor, rel_type, s_label, s_id, e_label, e_id, props)
+
+
+def run_delete_rel(actor, rel_type, s_label, s_id, e_label, e_id) -> dict:
+    driver = get_driver()
+    with driver.session(database=NEO4J_DATABASE) as session:
+        return session.execute_write(_do_delete_rel, actor, rel_type, s_label, s_id, e_label, e_id)
+
+
 # ---- Restore from snapshot --------------------------------------------------
 
 
@@ -208,70 +319,72 @@ def _do_restore(tx: ManagedTransaction, audit_id: str) -> dict:
     snap_rels = json.loads(record["sr"]) if record["sr"] else []
     payload = json.loads(record["ps"]) if record["ps"] else {}
 
-    # Strategy:
-    # - For every node touched by the import: if it existed in snapshot → overwrite with snapshot props;
-    #                                          if it did NOT exist in snapshot → delete it (and its rels).
-    # - For every rel touched: if it existed in snapshot → restore its props;
-    #                          if it did NOT exist in snapshot → delete it.
-    snapshot_node_keys = {(s["label"], s["primary_value"]) for s in snap_nodes}
-    snapshot_rel_keys = {
-        (s["rel_type"], s["start_label"], s["start_id"], s["end_label"], s["end_id"])
+    # Strategy (universal — dung cho ca import, update va delete):
+    # dua moi entity BI DONG TOI ve dung trang thai truoc thao tac (snapshot).
+    #   - entity CO trong snapshot  → phai TON TAI voi props cu  (MERGE + SET =)
+    #   - entity KHONG trong snapshot → phai VANG MAT             (DELETE)
+    # Thu tu de khong pham rang buoc: tao lai node → tao lai rel → xoa rel → xoa node.
+    # Nho vay rollback duoc ca thao tac DELETE (node/rel bi xoa se duoc tao lai).
+    snapshot_node_props = {(s["label"], s["primary_value"]): s["properties"] for s in snap_nodes}
+    snapshot_rel_props = {
+        (s["rel_type"], s["start_label"], s["start_id"], s["end_label"], s["end_id"]): s["properties"]
         for s in snap_rels
     }
 
-    # First, restore/delete relationships (must come before deleting nodes)
-    rels_restored = 0
-    rels_deleted = 0
-    for rsum in payload.get("relationships", []):
+    def _split_rel(rsum):
         # rsum: {"type": "TEACHES", "start": "Course:c1", "end": "Skill:s1"}
-        rt = rsum["type"]
         s_label, s_id = rsum["start"].split(":", 1)
         e_label, e_id = rsum["end"].split(":", 1)
-        key = (rt, s_label, s_id, e_label, e_id)
-        if key in snapshot_rel_keys:
-            # Restore properties
-            snap = next(
-                s for s in snap_rels
-                if (s["rel_type"], s["start_label"], s["start_id"], s["end_label"], s["end_id"]) == key
+        return rsum["type"], s_label, s_id, e_label, e_id
+
+    nodes_restored = nodes_deleted = rels_restored = rels_deleted = 0
+
+    # 1. Node co trong snapshot → tao lai / phuc hoi props (MERGE truoc rel)
+    for nsum in payload.get("nodes", []):
+        key = (nsum["label"], nsum["id"])
+        if key in snapshot_node_props:
+            pk = primary_key_of(nsum["label"])
+            tx.run(
+                f"MERGE (n:`{nsum['label']}` {{`{pk}`: $pk_val}}) SET n = $props",
+                pk_val=nsum["id"], props=snapshot_node_props[key],
             )
+            nodes_restored += 1
+
+    # 2. Rel co trong snapshot → tao lai / phuc hoi props (endpoint da co tu buoc 1)
+    for rsum in payload.get("relationships", []):
+        rt, s_label, s_id, e_label, e_id = _split_rel(rsum)
+        key = (rt, s_label, s_id, e_label, e_id)
+        if key in snapshot_rel_props:
             s_pk = primary_key_of(s_label)
             e_pk = primary_key_of(e_label)
             tx.run(
-                f"MATCH (s:`{s_label}` {{`{s_pk}`: $s_id}})-[r:`{rt}`]->(e:`{e_label}` {{`{e_pk}`: $e_id}}) "
-                "SET r = $props",
-                s_id=s_id, e_id=e_id, props=snap["properties"],
+                f"MATCH (s:`{s_label}` {{`{s_pk}`: $s_id}}) "
+                f"MATCH (e:`{e_label}` {{`{e_pk}`: $e_id}}) "
+                f"MERGE (s)-[r:`{rt}`]->(e) SET r = $props",
+                s_id=s_id, e_id=e_id, props=snapshot_rel_props[key],
             )
             rels_restored += 1
-        else:
+
+    # 3. Rel KHONG co trong snapshot (do thao tac tao ra) → xoa (truoc khi xoa node)
+    for rsum in payload.get("relationships", []):
+        rt, s_label, s_id, e_label, e_id = _split_rel(rsum)
+        if (rt, s_label, s_id, e_label, e_id) not in snapshot_rel_props:
             s_pk = primary_key_of(s_label)
             e_pk = primary_key_of(e_label)
             tx.run(
-                f"MATCH (s:`{s_label}` {{`{s_pk}`: $s_id}})-[r:`{rt}`]->(e:`{e_label}` {{`{e_pk}`: $e_id}}) "
-                "DELETE r",
+                f"MATCH (s:`{s_label}` {{`{s_pk}`: $s_id}})-[r:`{rt}`]->"
+                f"(e:`{e_label}` {{`{e_pk}`: $e_id}}) DELETE r",
                 s_id=s_id, e_id=e_id,
             )
             rels_deleted += 1
 
-    # Then nodes
-    nodes_restored = 0
-    nodes_deleted = 0
+    # 4. Node KHONG co trong snapshot (do thao tac tao ra) → detach delete
     for nsum in payload.get("nodes", []):
-        label = nsum["label"]
-        pk_val = nsum["id"]
-        key = (label, pk_val)
-        pk = primary_key_of(label)
-        if key in snapshot_node_keys:
-            snap = next(s for s in snap_nodes if (s["label"], s["primary_value"]) == key)
+        if (nsum["label"], nsum["id"]) not in snapshot_node_props:
+            pk = primary_key_of(nsum["label"])
             tx.run(
-                f"MATCH (n:`{label}` {{`{pk}`: $pk_val}}) SET n = $props",
-                pk_val=pk_val, props=snap["properties"],
-            )
-            nodes_restored += 1
-        else:
-            # Node didn't exist before; delete (DETACH to also clean any leftover rels)
-            tx.run(
-                f"MATCH (n:`{label}` {{`{pk}`: $pk_val}}) DETACH DELETE n",
-                pk_val=pk_val,
+                f"MATCH (n:`{nsum['label']}` {{`{pk}`: $pk_val}}) DETACH DELETE n",
+                pk_val=nsum["id"],
             )
             nodes_deleted += 1
 

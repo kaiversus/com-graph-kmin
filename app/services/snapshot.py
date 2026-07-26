@@ -91,6 +91,50 @@ def snapshot_relationships(tx: Transaction, targets: list[dict]) -> list[dict]:
     return snap
 
 
+def snapshot_node_rels(tx: Transaction, label: str, node_id: str) -> list[dict]:
+    """
+    Snapshot MOI quan he (whitelisted) gan voi 1 node, ca 2 chieu.
+
+    Dung truoc khi DETACH DELETE node — de rollback co the tao lai ca node
+    lan cac quan he cua no. Tra ve cung shape voi snapshot_relationships().
+    """
+    if label not in NODE_LABELS:
+        return []
+    pk = primary_key_of(label)
+    query = (
+        f"MATCH (n:`{label}` {{`{pk}`: $id}})-[r]-(m) "
+        "RETURN type(r) AS rt, properties(r) AS rprops, "
+        "startNode(r) = n AS out, labels(m) AS mlabels, properties(m) AS mprops"
+    )
+    snap: list[dict] = []
+    seen: set[tuple] = set()
+    for rec in tx.run(query, id=node_id):
+        rt = rec["rt"]
+        if rt not in RELATIONSHIP_SCHEMA:
+            continue
+        mlabel = next((l for l in rec["mlabels"] if l in NODE_LABELS), None)
+        if not mlabel:
+            continue
+        m_id = rec["mprops"].get(primary_key_of(mlabel))
+        if rec["out"]:
+            s_label, s_id, e_label, e_id = label, node_id, mlabel, m_id
+        else:
+            s_label, s_id, e_label, e_id = mlabel, m_id, label, node_id
+        key = (rt, s_label, s_id, e_label, e_id)
+        if key in seen:  # self-loop co the tra 2 lan
+            continue
+        seen.add(key)
+        snap.append({
+            "rel_type": rt,
+            "start_label": s_label,
+            "start_id": s_id,
+            "end_label": e_label,
+            "end_id": e_id,
+            "properties": dict(rec["rprops"]),
+        })
+    return snap
+
+
 def write_audit_log(
     tx: Transaction,
     actor: str,

@@ -10,6 +10,7 @@ Xem design/doc/recommend_feature_spec.md.
 from typing import Any
 
 from app.config import (
+    allowed_ends,
     get_driver,
     NEO4J_DATABASE,
     NODE_LABELS,
@@ -19,19 +20,26 @@ from app.config import (
 )
 
 # Prefix sinh id, theo convention data hien co (SKILL-001, TOPIC-001, ...)
+# Role la graph-owned → cung auto ROLE-NNN. Shadow (User/Course/Lesson/Project/
+# Content) co prefix de goi y so tiep theo, nhung admin van tu go id that.
 ID_PREFIX = {
     "Skill": "SKILL",
     "Concept": "CONCEPT",
     "Topic": "TOPIC",
     "Task": "TASK",
+    "Role": "ROLE",
     "User": "USER",
     "Course": "COURSE",
+    "Lesson": "LESSON",
+    "Project": "PROJECT",
+    "Content": "CONTENT",
 }
 
 # Shadow node — chi co primary key, data that nam o MySQL.
 # Van tao moi duoc, nhung admin phai TU GO id (de khop voi ben quan he)
 # thay vi de server auto-increment. Xem needs_manual_id().
-SHADOW_LABELS = {"User", "Course"}
+# Role KHONG shadow (graph-owned) nen khong nam trong day.
+SHADOW_LABELS = {"User", "Course", "Lesson", "Project", "Content"}
 
 # Rel same_label nhung doi xung ve nghia → chi render 1 card, ghi outgoing.
 # PARENT_OF cung same_label nhung co thu bac nen KHONG nam trong day.
@@ -49,9 +57,12 @@ DISPLAY_LABELS = {
     ("Skill", "REQUIRES", "outgoing", "Skill"): "Skill tiên quyết",
     ("Skill", "REQUIRES", "outgoing", "Concept"): "Concept tiên quyết",
     ("Skill", "REQUIRES", "incoming", "Skill"): "Skill cần skill này",
+    ("Skill", "REQUIRES", "incoming", "Role"): "Vai trò cần skill này",
     ("Skill", "INCLUDES", "incoming", "Topic"): "Topic chứa skill",
     ("Skill", "PRACTICES", "incoming", "Task"): "Task luyện skill",
+    ("Skill", "PRACTICES", "incoming", "Project"): "Project luyện skill",
     ("Skill", "TEACHES", "incoming", "Course"): "Course dạy skill",
+    ("Skill", "TEACHES", "incoming", "Lesson"): "Lesson dạy skill",
     ("Skill", "HAS_SKILL", "incoming", "User"): "User có skill",
     ("Skill", "RELATED_TO", "symmetric", "Skill"): "Skill liên quan",
     # --- Concept ---
@@ -60,15 +71,28 @@ DISPLAY_LABELS = {
     ("Concept", "INCLUDES", "incoming", "Topic"): "Topic chứa concept",
     ("Concept", "REQUIRES", "incoming", "Skill"): "Skill cần concept",
     ("Concept", "APPLIES", "incoming", "Task"): "Task áp dụng concept",
+    ("Concept", "APPLIES", "incoming", "Project"): "Project áp dụng concept",
     ("Concept", "COVERS", "incoming", "Course"): "Course bao phủ concept",
+    ("Concept", "COVERS", "incoming", "Lesson"): "Lesson bao phủ concept",
+    ("Concept", "COVERS", "incoming", "Content"): "Content bao phủ concept",
     ("Concept", "RELATED_TO", "symmetric", "Concept"): "Concept liên quan",
     # --- Task ---
     ("Task", "PRACTICES", "outgoing", "Skill"): "Skill được luyện",
     ("Task", "APPLIES", "outgoing", "Concept"): "Concept được áp dụng",
     ("Task", "RELATED_TO", "symmetric", "Task"): "Task liên quan",
+    # --- Role (graph-owned) ---
+    ("Role", "REQUIRES", "outgoing", "Skill"): "Skill vai trò cần",
     # --- Course (shadow) ---
     ("Course", "COVERS", "outgoing", "Concept"): "Concept khóa học bao phủ",
     ("Course", "TEACHES", "outgoing", "Skill"): "Skill khóa học dạy",
+    # --- Lesson (shadow) ---
+    ("Lesson", "TEACHES", "outgoing", "Skill"): "Skill bài học dạy",
+    ("Lesson", "COVERS", "outgoing", "Concept"): "Concept bài học bao phủ",
+    # --- Content (shadow) ---
+    ("Content", "COVERS", "outgoing", "Concept"): "Concept nội dung bao phủ",
+    # --- Project (shadow) ---
+    ("Project", "PRACTICES", "outgoing", "Skill"): "Skill dự án luyện",
+    ("Project", "APPLIES", "outgoing", "Concept"): "Concept dự án áp dụng",
     # --- User (shadow) ---
     ("User", "HAS_SKILL", "outgoing", "Skill"): "Skill user có",
 }
@@ -103,9 +127,9 @@ def build_suggestions(root_label: str) -> list[dict]:
         same_label = spec.get("same_label", False)
         is_symmetric = rel_type in SYMMETRIC_RELS
 
-        # Chieu di ra: root nam o dau start
+        # Chieu di ra: root nam o dau start (end co the bi restrict theo start)
         if root_label in spec["starts"]:
-            for child in sorted(spec["ends"]):
+            for child in sorted(allowed_ends(spec, root_label)):
                 # same_label → chi ghep voi chinh label do (Topic→Topic, khong Topic→Concept)
                 if same_label and child != root_label:
                     continue
@@ -116,6 +140,9 @@ def build_suggestions(root_label: str) -> list[dict]:
         if root_label in spec["ends"]:
             for child in sorted(spec["starts"]):
                 if same_label and child != root_label:
+                    continue
+                # start bi restrict khong toi duoc root nay → bo (vd Role khong toi Concept)
+                if root_label not in allowed_ends(spec, child):
                     continue
                 # Rel doi xung da phat 1 card o tren roi → khong lap lai
                 if is_symmetric:
@@ -137,7 +164,7 @@ def rel_types_between(start_label: str, end_label: str) -> list[dict]:
 
     out: list[dict] = []
     for rel_type, spec in RELATIONSHIP_SCHEMA.items():
-        if start_label not in spec["starts"] or end_label not in spec["ends"]:
+        if start_label not in spec["starts"] or end_label not in allowed_ends(spec, start_label):
             continue
         if spec.get("same_label") and start_label != end_label:
             continue

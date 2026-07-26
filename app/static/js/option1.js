@@ -60,6 +60,7 @@ function addRelBlock() {
     const propGrid = block.querySelector('.rel-props');
     propGrid.innerHTML = '';
     Object.entries(spec.props || {}).forEach(([f, ps]) => {
+      if (ps.auto) return;  // vd lastUpdatedAt do server tự set
       propGrid.appendChild(makeInput(f, ps));
     });
   };

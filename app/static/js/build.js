@@ -141,7 +141,7 @@ document.getElementById('rb-start').addEventListener('click', () => {
     props = collectProps(document.getElementById('rb-root-new'));
     // required check phía client cho nhanh; server vẫn validate lại
     const missing = rbPropFields(label)
-      .filter(([f, spec]) => spec.required && !props[f]).map(([f]) => f);
+      .filter(([f, spec]) => spec.required && !(f in props)).map(([f]) => f);
     if (missing.length) {
       showResult('rb-result', `Thiếu field bắt buộc: ${missing.join(', ')}`, 'err');
       return;
@@ -427,7 +427,8 @@ function rbOpenForm(idx) {
     exBox.style.display = m === 'existing' ? '' : 'none';
   }));
 
-  const relSpecs = Object.entries(s.rel_props_spec);
+  // auto props (vd lastUpdatedAt) do server tự set → không render, không đòi nhập
+  const relSpecs = Object.entries(s.rel_props_spec).filter(([, sp]) => !sp.auto);
   let relBox = null;
   if (relSpecs.length) {
     relBox = document.createElement('div');
@@ -459,7 +460,7 @@ function rbOpenForm(idx) {
   addBtn.addEventListener('click', () => {
     const mode = modeRow.querySelector(`input[name="${gid}"]:checked`).value;
     const relProps = relBox ? collectProps(relBox) : {};
-    const missingRel = relSpecs.filter(([f, sp]) => sp.required && !relProps[f]).map(([f]) => f);
+    const missingRel = relSpecs.filter(([f, sp]) => sp.required && !(f in relProps)).map(([f]) => f);
     if (missingRel.length) {
       showResult('rb-result', `${s.rel_type}: thiếu ${missingRel.join(', ')}`, 'err');
       return;
@@ -469,7 +470,7 @@ function rbOpenForm(idx) {
     if (mode === 'new') {
       props = collectProps(newBox);
       const missing = rbPropFields(s.child_label)
-        .filter(([f, sp]) => sp.required && !props[f]).map(([f]) => f);
+        .filter(([f, sp]) => sp.required && !(f in props)).map(([f]) => f);
       if (missing.length) {
         showResult('rb-result', `${s.child_label}: thiếu ${missing.join(', ')}`, 'err');
         return;
@@ -641,7 +642,7 @@ function rbRelChoiceForm(from, to, types) {
     propBox.innerHTML = '';
     const r = types.find(x => x.rel_type === relSel.value);
     if (!r) return;
-    const specs = Object.entries(r.props_spec);
+    const specs = Object.entries(r.props_spec).filter(([, sp]) => !sp.auto);
     const req = specs.filter(([, sp]) => sp.required);
     const opt = specs.filter(([, sp]) => !sp.required);
     if (req.length) {
@@ -671,7 +672,7 @@ function rbRelChoiceForm(from, to, types) {
     const r = types.find(x => x.rel_type === relSel.value);
     const props = collectProps(propBox);
     const missing = Object.entries(r.props_spec)
-      .filter(([f, sp]) => sp.required && !props[f]).map(([f]) => f);
+      .filter(([f, sp]) => !sp.auto && sp.required && !(f in props)).map(([f]) => f);
     if (missing.length) {
       showResult('rb-result', `${r.rel_type}: thiếu ${missing.join(', ')}`, 'err');
       return;

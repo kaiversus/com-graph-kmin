@@ -35,7 +35,10 @@ NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
 
 # Allowed node labels and relationship types (white-list to prevent Cypher injection
 # via label/type parameter — Cypher does not parameterize these)
-NODE_LABELS = {"Skill", "Concept", "Topic", "Task", "User", "Course"}
+NODE_LABELS = {
+    "Skill", "Concept", "Topic", "Task", "Role",  # graph-owned
+    "User", "Course", "Lesson", "Project", "Content",  # shadow (synced from relational)
+}
 
 # Schema definition: relationship_type -> (allowed_start_labels, allowed_end_labels, properties_spec)
 # properties_spec = { name: (type, required, allowed_values_or_None) }
@@ -53,10 +56,13 @@ RELATIONSHIP_SCHEMA = {
         "props": {},
     },
     "REQUIRES": {
-        "starts": {"Skill"},
+        # Skill -> Skill/Concept (prerequisite). Role -> Skill (kĩ năng vai trò cần).
+        # `restrict` giới hạn Role chỉ được trỏ tới Skill (không tới Concept).
+        "starts": {"Skill", "Role"},
         "ends": {"Skill", "Concept"},
+        "restrict": {"Role": {"Skill"}},
         "props": {
-            "weight": {"type": "float", "required": False, "min": 0.0, "max": 1.0},
+            "weight": {"type": "float", "required": False, "min": 0.0, "max": 1.0, "default": 1.0},
         },
     },
     "RELATED_TO": {
@@ -64,7 +70,7 @@ RELATIONSHIP_SCHEMA = {
         "ends": {"Skill", "Concept", "Topic", "Task"},
         "same_label": True,
         "props": {
-            "weight": {"type": "float", "required": False, "min": 0.0, "max": 1.0},
+            "weight": {"type": "float", "required": False, "min": 0.0, "max": 1.0, "default": 0.5},
             "relational_type": {
                 "type": "string",
                 "required": True,
@@ -73,18 +79,24 @@ RELATIONSHIP_SCHEMA = {
         },
     },
     "PRACTICES": {
-        "starts": {"Task"},
+        # Task -> Skill, Project -> Skill
+        "starts": {"Task", "Project"},
         "ends": {"Skill"},
-        "props": {},
+        "props": {
+            "weight": {"type": "float", "required": False, "min": 0.0, "max": 1.0},
+            "is_core": {"type": "boolean", "required": False},
+        },
     },
     "APPLIES": {
-        "starts": {"Task"},
+        # Task -> Concept, Project -> Concept
+        "starts": {"Task", "Project"},
         "ends": {"Concept"},
         "props": {},
     },
-    # Cross-domain (3)
+    # Cross-domain
     "COVERS": {
-        "starts": {"Course"},
+        # Course/Lesson/Content -> Concept.
+        "starts": {"Course", "Lesson", "Content"},
         "ends": {"Concept"},
         "props": {
             "depth": {
@@ -98,20 +110,26 @@ RELATIONSHIP_SCHEMA = {
         "starts": {"User"},
         "ends": {"Skill"},
         "props": {
-            "proficiency": {
-                "type": "string",
-                "required": True,
-                "enum": ["foundational", "beginner", "intermediate", "advance", "expert"],
-            },
+            # proficiency: float 0.0–1.0. Ngưỡng map nhãn (frontend map lúc hiển thị):
+            #   [0.0, 0.2) = foundational
+            #   [0.2, 0.4) = beginner
+            #   [0.4, 0.6) = intermediate
+            #   [0.6, 0.8) = advance
+            #   [0.8, 1.0] = expert
+            "proficiency": {"type": "float", "required": True, "min": 0.0, "max": 1.0},
             "confidence": {"type": "float", "required": False, "min": 0.0, "max": 1.0},
             "credentials": {"type": "string", "required": False},
+            "source": {"type": "string", "required": False},
+            # auto: server tự set datetime() lúc ghi — admin không nhập.
+            "lastUpdatedAt": {"type": "datetime", "required": True, "auto": "timestamp"},
         },
     },
     "TEACHES": {
-        "starts": {"Course"},
+        # Course -> Skill, Lesson -> Skill
+        "starts": {"Course", "Lesson"},
         "ends": {"Skill"},
         "props": {
-            "relevance": {"type": "float", "required": False, "min": 0.0, "max": 1.0},
+            "relevance": {"type": "float", "required": False, "min": 0.0, "max": 1.0, "default": 0.5},
         },
     },
 }
@@ -144,6 +162,12 @@ NODE_PROP_SCHEMA = {
         "name": {"type": "string", "required": True, "max_len": 200},
         "description": {"type": "string", "required": False, "max_len": 2000},
     },
+    # Role — graph-owned (auto ROLE-NNN id), vai trò nghề nghiệp user hướng tới.
+    "Role": {
+        "id": {"type": "string", "required": True, "primary_key": True},
+        "name": {"type": "string", "required": True, "max_len": 200},
+        "description": {"type": "string", "required": False, "max_len": 2000},
+    },
     # Shadow nodes — only ref id from relational DB
     "User": {
         "id_user": {"type": "string", "required": True, "primary_key": True},
@@ -151,7 +175,30 @@ NODE_PROP_SCHEMA = {
     "Course": {
         "id_course": {"type": "string", "required": True, "primary_key": True},
     },
+    "Lesson": {
+        "id_lesson": {"type": "string", "required": True, "primary_key": True},
+    },
+    "Project": {
+        "id_project": {"type": "string", "required": True, "primary_key": True},
+    },
+    "Content": {
+        "id_content": {"type": "string", "required": True, "primary_key": True},
+    },
 }
+
+
+def allowed_ends(rel_spec: dict, start_label: str | None) -> set:
+    """
+    End labels hợp lệ cho một relationship khi biết start_label.
+
+    Mặc định là rel_spec["ends"]. Nếu có `restrict` và start_label nằm trong đó
+    thì giới hạn theo restrict (vd REQUIRES: Role chỉ được trỏ tới Skill, không
+    tới Concept — dù Skill vẫn được trỏ tới cả Skill lẫn Concept).
+    """
+    restrict = rel_spec.get("restrict")
+    if restrict and start_label in restrict:
+        return restrict[start_label]
+    return rel_spec["ends"]
 
 
 def primary_key_of(label: str) -> str:

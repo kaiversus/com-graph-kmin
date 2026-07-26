@@ -55,12 +55,20 @@ def merge_relationships_unwind_cypher(rel_type: str, start_label: str, end_label
         raise ValueError("Start/end label not whitelisted")
     s_pk = primary_key_of(start_label)
     e_pk = primary_key_of(end_label)
+    # auto props (vd lastUpdatedAt) → set bằng datetime() của Neo4j = giờ server
+    # tại thời điểm ghi, không lấy từ input. Chạy sau `SET r += row.props`.
+    auto_sets = "".join(
+        f"SET r.`{p}` = datetime() "
+        for p, ps in RELATIONSHIP_SCHEMA[rel_type].get("props", {}).items()
+        if ps.get("auto") == "timestamp"
+    )
     return (
         f"UNWIND $rows AS row "
         f"MATCH (s:`{start_label}` {{`{s_pk}`: row.start_id}}) "
         f"MATCH (e:`{end_label}` {{`{e_pk}`: row.end_id}}) "
         f"MERGE (s)-[r:`{rel_type}`]->(e) "
         f"SET r += row.props "
+        f"{auto_sets}"
         f"RETURN count(r) AS cnt"
     )
 

@@ -5,10 +5,14 @@ Trả về (valid_records, errors). errors là list dict { row_index, field, mes
 """
 import re
 from typing import Any
-from app.config import NODE_PROP_SCHEMA, RELATIONSHIP_SCHEMA, primary_key_of
+from app.config import NODE_PROP_SCHEMA, RELATIONSHIP_SCHEMA, allowed_ends, primary_key_of
 
 # id format: slug — allow alphanumeric, dash, underscore, dot
 _ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+# boolean coercion — chấp nhận cả bool thật lẫn chuỗi/số từ form/CSV
+_TRUE = {"true", "1", "yes", "y", "t"}
+_FALSE = {"false", "0", "no", "n", "f"}
 
 
 def _validate_value(value: Any, spec: dict, field: str) -> tuple[Any, str | None]:
@@ -16,6 +20,9 @@ def _validate_value(value: Any, spec: dict, field: str) -> tuple[Any, str | None
     if value is None or (isinstance(value, str) and value.strip() == ""):
         if spec.get("required"):
             return None, f"'{field}' is required"
+        # Optional bỏ trống nhưng có default → điền default (vd weight=1.0)
+        if "default" in spec:
+            return spec["default"], None
         return None, None
 
     typ = spec["type"]
@@ -43,7 +50,19 @@ def _validate_value(value: Any, spec: dict, field: str) -> tuple[Any, str | None
             v = int(value)
         except (TypeError, ValueError):
             return None, f"'{field}' must be an integer"
+        if "enum" in spec and v not in spec["enum"]:
+            return None, f"'{field}' must be one of {spec['enum']}, got {v}"
         return v, None
+
+    if typ == "boolean":
+        if isinstance(value, bool):
+            return value, None
+        s = str(value).strip().lower()
+        if s in _TRUE:
+            return True, None
+        if s in _FALSE:
+            return False, None
+        return None, f"'{field}' must be true/false"
 
     return value, None
 
@@ -117,11 +136,13 @@ def validate_relationship_record(rel_type: str, record: dict, row_index: int = 0
             "field": "start_label",
             "message": f"start_label must be one of {sorted(rel_spec['starts'])}, got '{start_label}'",
         })
-    if not end_label or end_label not in rel_spec["ends"]:
+    # end hợp lệ có thể bị giới hạn theo start (restrict): vd Role chỉ tới Skill.
+    valid_ends = allowed_ends(rel_spec, start_label)
+    if not end_label or end_label not in valid_ends:
         errors.append({
             "row": row_index,
             "field": "end_label",
-            "message": f"end_label must be one of {sorted(rel_spec['ends'])}, got '{end_label}'",
+            "message": f"end_label must be one of {sorted(valid_ends)} for start '{start_label}', got '{end_label}'",
         })
 
     if rel_spec.get("same_label") and start_label and end_label and start_label != end_label:
@@ -149,6 +170,10 @@ def validate_relationship_record(rel_type: str, record: dict, row_index: int = 0
     clean_props: dict = {}
     prop_specs = rel_spec.get("props", {})
     for field, spec in prop_specs.items():
+        # auto prop (vd lastUpdatedAt) do server set lúc ghi — không validate,
+        # không lấy từ input của admin. Xem importer.merge_relationships_unwind_cypher.
+        if spec.get("auto"):
+            continue
         coerced, err = _validate_value(record.get(field), spec, field)
         if err:
             errors.append({"row": row_index, "field": field, "message": err})

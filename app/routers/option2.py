@@ -206,3 +206,49 @@ def commit_csv(staging_id: str = Form(...), actor: str = Form("admin")):
         raise HTTPException(status_code=500, detail={"error": str(e), "phase": "transaction"})
 
     return {"success": True, **result}
+
+
+@router.post("/commit-batch")
+def commit_batch(staging_ids: str = Form(...), actor: str = Form("admin")):
+    """
+    Commit NHIỀU file đã stage trong MỘT transaction duy nhất.
+
+    Bắt buộc cho các node có ràng buộc tồn tại: vd Knowledge phải được REQUIRES
+    trỏ tới cùng transaction — nên phải gom file node Knowledge + file REQUIRES
+    tương ứng rồi commit chung 1 mẻ. Toàn bộ node được MERGE trước, rồi tới rel,
+    rồi kiểm ràng buộc (lá, tồn tại) — sai bất kỳ đâu → rollback cả mẻ.
+
+    staging_ids: các id ngăn cách bởi dấu phẩy.
+    """
+    ids = [s.strip() for s in staging_ids.split(",") if s.strip()]
+    if not ids:
+        raise HTTPException(status_code=400, detail="Chưa có staging_id nào")
+    missing = [i for i in ids if i not in _STAGING]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"staging_id không tồn tại/đã commit: {missing}")
+
+    staged = [(i, _STAGING[i]) for i in ids]
+    nodes: list[dict] = []
+    rels: list[dict] = []
+    for _i, st in staged:
+        if st["kind"] == "node":
+            nodes.extend(st["records"])
+        else:
+            rels.extend(st["records"])
+
+    try:
+        # nodes được merge trước rels trong _do_import → thứ tự file không quan trọng
+        result = run_import(
+            actor=actor, option="option2_csv_batch", nodes=nodes, relationships=rels,
+        )
+    except Exception as e:
+        # giữ nguyên staging để user sửa & thử lại (không mất công validate lại)
+        raise HTTPException(status_code=500, detail={"error": str(e), "phase": "transaction"})
+
+    for i in ids:
+        _STAGING.pop(i, None)
+    return {
+        "success": True, "files": len(ids),
+        "targets": [st["target"] for _i, st in staged],
+        **result,
+    }

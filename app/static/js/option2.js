@@ -65,28 +65,43 @@ document.getElementById('opt2-validate').addEventListener('click', async () => {
 
 document.getElementById('opt2-commit').addEventListener('click', async () => {
   if (!opt2Batch.length) return;
-  if (!confirm(`Commit ${opt2Batch.length} file? Mỗi file là 1 transaction riêng.`)) return;
+  const hasNodes = opt2Batch.some(x => x.kind === 'node');
+  const hasRels = opt2Batch.some(x => x.kind === 'rel');
+  // Cảnh báo nếu chỉ có node mà không có rel: Knowledge sẽ fail ràng buộc tồn tại
+  if (hasNodes && !hasRels &&
+      !confirm('Chỉ có file NODE, không có file quan hệ.\n' +
+               'Nếu có node Knowledge, commit sẽ BỊ CHẶN (Knowledge phải được REQUIRES cùng mẻ).\n' +
+               'Vẫn tiếp tục?')) return;
+  if (!confirm(`Commit ${opt2Batch.length} file trong MỘT transaction (all-or-nothing)?`)) return;
 
-  const results = [];
-  for (const item of opt2Batch) {
-    const fd = new FormData();
-    fd.append('staging_id', item.staging_id);
-    fd.append('actor', 'admin');
-    const r = await fetch('/api/option2/commit', { method: 'POST', body: fd });
-    const data = await r.json();
-    results.push({ file: item.file_name, ok: r.ok, ...data });
+  const fd = new FormData();
+  fd.append('staging_ids', opt2Batch.map(x => x.staging_id).join(','));
+  fd.append('actor', 'admin');
+  let data, ok;
+  try {
+    const r = await fetch('/api/option2/commit-batch', { method: 'POST', body: fd });
+    data = await r.json();
+    ok = r.ok;
+  } catch (e) {
+    showResult('opt2-result', `Lỗi mạng: ${e}`, 'err');
+    return;
   }
-  const okCount = results.filter(r => r.ok).length;
-  const summary = results.map(r =>
-    `${r.ok ? '✓' : '✗'} ${r.file}: ` +
-    (r.ok ? `nodes=${r.nodes_written} rels=${r.relationships_written} audit=${r.audit_id}`
-          : `failed → ${JSON.stringify(r.detail || r)}`)
-  ).join('\n');
-  showResult('opt2-result',
-    `${okCount}/${opt2Batch.length} commits OK\n\n${summary}`,
-    okCount === opt2Batch.length ? 'ok' : 'err');
-  document.getElementById('opt2-commit').disabled = true;
-  opt2Batch = [];
+
+  if (ok) {
+    showResult('opt2-result',
+      `✓ Commit ${data.files} file trong 1 transaction.\n` +
+      `nodes=${data.nodes_written} · rels=${data.relationships_written}\n` +
+      `audit_id: ${data.audit_id}  (Restore được ở tab Audit)`,
+      'ok');
+    document.getElementById('opt2-commit').disabled = true;
+    opt2Batch = [];
+  } else {
+    const det = data.detail || data;
+    const msg = det.error || (det.errors ? det.errors.map(e => `[row ${e.row}] ${e.field}: ${e.message}`).join('\n') : JSON.stringify(det));
+    showResult('opt2-result',
+      `✗ Commit thất bại — rollback toàn bộ, staging giữ nguyên để sửa & thử lại:\n${msg}`,
+      'err');
+  }
 });
 
 export { populateOpt2Targets };

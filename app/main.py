@@ -61,6 +61,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="COM Platform Graph Admin", lifespan=lifespan)
 
+
+@app.middleware("http")
+async def _no_cache_static(request: Request, call_next):
+    """Admin tool đang phát triển → ép browser revalidate JS/CSS, tránh chạy bản cũ do cache."""
+    response = await call_next(request)
+    if request.url.path.startswith("/static"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
+
+
 _BASE = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=str(_BASE / "static")), name="static")
 templates = Jinja2Templates(directory=str(_BASE / "templates"))

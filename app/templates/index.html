@@ -53,9 +53,14 @@
     <h2>Option 2 — CSV bulk import</h2>
     <p class="hint">
       <strong>Cách 1 (auto-detect):</strong> upload file đặt tên theo convention
-      (vd <code>nodes_skills.csv</code>, <code>rels_teaches.csv</code>) — system tự nhận diện và map header.
+      (vd <code>nodes_skills.csv</code>, <code>rels_requires_skill_knowledge.csv</code>) — system tự nhận diện và map header.
       <br/>
       <strong>Cách 2 (manual):</strong> chọn kind &amp; target rồi upload, file phải dùng header chuẩn nội bộ.
+      <br/>
+      <strong>Commit = 1 transaction (all-or-nothing)</strong> cho TẤT CẢ file đã validate. Sai bất kỳ đâu → rollback cả mẻ.
+      <br/>
+      ⚠ <strong>Knowledge phải nạp kèm quan hệ REQUIRES trong cùng mẻ:</strong> chọn <code>nodes_knowledge.csv</code>
+      <em>cùng lúc với</em> <code>rels_requires_skill_knowledge.csv</code> (và file Skill nếu Skill chưa có) rồi Commit — nạp Knowledge một mình sẽ bị chặn (ràng buộc tồn tại).
       <br/>
       <a href="/api/option2/presets" target="_blank">Xem danh sách preset hỗ trợ</a>
     </p>

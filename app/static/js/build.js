@@ -21,16 +21,15 @@ const RB = {
 const RB_ARROW = { outgoing: '→', incoming: '←', symmetric: '↔' };
 
 function rbPropFields(label) {
-  // Shadow node (User/Course) trỏ sang bản quan hệ → admin tự gõ id.
-  // Label thường thì bỏ primary key đi vì server tự cấp LABEL-NNN.
+  // Mọi node giờ admin tự gõ id (slug có tiền tố loại) → luôn hiện primary key.
   const manual = rbLabelMeta(label)?.manual_id;
   return Object.entries(SCHEMA.nodes[label]).filter(([, spec]) => manual || !spec.primary_key);
 }
 
-// Gợi ý id kế tiếp làm placeholder cho ô nhập id của shadow node
+// Gợi ý id kế tiếp làm placeholder cho ô nhập id
 async function rbHintNextId(label, container) {
   if (!rbLabelMeta(label)?.manual_id) return;
-  const pkInput = container.querySelector('input[data-field="id_user"], input[data-field="id_course"]');
+  const pkInput = container.querySelector('input[data-field^="id"]');
   if (!pkInput) return;
   try {
     const d = await (await fetch(`/api/recommend/next-id/${label}`)).json();
@@ -386,7 +385,7 @@ function rbOpenForm(idx) {
   modeRow.innerHTML =
     `<label style="min-width:auto"><input type="radio" name="${gid}" value="new" checked /> Tạo mới</label>` +
     `<label style="min-width:auto"><input type="radio" name="${gid}" value="existing" /> Link node có sẵn</label>` +
-    (s.manual_id ? ' <span class="hint">(shadow node — tự gõ id cho khớp bản quan hệ)</span>' : '');
+    (s.manual_id ? ' <span class="hint">(tự gõ id — slug có tiền tố loại node)</span>' : '');
   body.appendChild(modeRow);
 
   const newBox = document.createElement('div');

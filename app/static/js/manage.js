@@ -12,11 +12,22 @@ function mngDebounce(fn, ms = 250) {
   return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 }
 
-// Điền value hiện tại vào các input/select đã dựng bằng makeInput
+// Điền value hiện tại vào các input/select/textarea đã dựng bằng makeInput
 function prefill(container, props) {
-  container.querySelectorAll('input,select').forEach(el => {
+  container.querySelectorAll('input,select,textarea').forEach(el => {
     const f = el.dataset.field;
-    if (f && props[f] !== undefined && props[f] !== null) el.value = props[f];
+    if (!f || props[f] === undefined || props[f] === null) return;
+    const val = props[f];
+    if (el.multiple) {
+      // enum_list: chọn các option khớp giá trị mảng
+      const set = new Set(Array.isArray(val) ? val : [val]);
+      Array.from(el.options).forEach(o => { o.selected = set.has(o.value); });
+    } else if (Array.isArray(val)) {
+      // string_list: hiển thị dạng "a, b, c"
+      el.value = val.join(', ');
+    } else {
+      el.value = val;
+    }
   });
 }
 

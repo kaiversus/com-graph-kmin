@@ -36,85 +36,106 @@ NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
 # Allowed node labels and relationship types (white-list to prevent Cypher injection
 # via label/type parameter — Cypher does not parameterize these)
 NODE_LABELS = {
-    "Skill", "Concept", "Topic", "Task", "Role",  # graph-owned
-    "User", "Course", "Lesson", "Project", "Content",  # shadow (synced from relational)
+    "Skill", "Knowledge", "KnowledgeArea", "JobRole",  # graph-owned
+    "Account", "Content", "Task", "Quiz", "Mentor",    # shadow (synced from relational/Mongo)
 }
 
-# Schema definition: relationship_type -> (allowed_start_labels, allowed_end_labels, properties_spec)
-# properties_spec = { name: (type, required, allowed_values_or_None) }
+# Prop chung áp cho MỌI node (graph-owned lẫn shadow):
+#   source — node này tham khảo từ nguồn nào
+#   status — draft/reviewed/approved (mặc định draft khi bỏ trống)
+_COMMON_NODE_PROPS = {
+    "source": {"type": "string", "required": False, "max_len": 500},
+    "status": {
+        "type": "string",
+        "required": False,
+        "enum": ["draft", "reviewed", "approved"],
+        "default": "draft",
+    },
+}
+
+# 4 mức độ khó dùng chung cho Skill.level và Knowledge.difficulty
+_DIFFICULTY_4 = ["beginner", "intermediate", "advanced", "expert"]
+
+# Ràng buộc tồn tại: node label -> phải có ÍT NHẤT 1 quan hệ loại này TRỎ TỚI
+# (incoming) thì mới được tồn tại. Vd Knowledge phải được 1 Skill REQUIRES tới,
+# không cho tạo Knowledge "mồ côi". Enforce ở tầng transaction (importer).
+NODE_REQUIRES_INCOMING = {
+    "Knowledge": "REQUIRES",
+}
+
+# Schema definition: relationship_type -> { starts, ends, [restrict], [same_label],
+#   [start_leaf_of], props }
+# props = { name: {type, required, ...constraints} }
 RELATIONSHIP_SCHEMA = {
-    # Intra-taxonomy (6)
-    "PARENT_OF": {
-        "starts": {"Topic", "Concept"},
-        "ends": {"Topic", "Concept"},
-        "same_label": True,  # Topic->Topic OR Concept->Concept
-        "props": {},
-    },
-    "INCLUDES": {
-        "starts": {"Topic"},
-        "ends": {"Skill", "Concept"},
-        "props": {},
-    },
+    # --- Prerequisite / role requirement ---
     "REQUIRES": {
-        # Skill -> Skill/Concept (prerequisite). Role -> Skill (kĩ năng vai trò cần).
-        # `restrict` giới hạn Role chỉ được trỏ tới Skill (không tới Concept).
-        "starts": {"Skill", "Role"},
-        "ends": {"Skill", "Concept"},
-        "restrict": {"Role": {"Skill"}},
+        # JobRole -> Skill (skill vai trò cần). Skill -> Skill/Knowledge (tiên quyết).
+        # `restrict` giới hạn JobRole chỉ trỏ tới Skill (không tới Knowledge).
+        "starts": {"JobRole", "Skill"},
+        "ends": {"Skill", "Knowledge"},
+        "restrict": {"JobRole": {"Skill"}},
         "props": {
             "weight": {"type": "float", "required": False, "min": 0.0, "max": 1.0, "default": 1.0},
         },
     },
     "RELATED_TO": {
-        "starts": {"Skill", "Concept", "Topic", "Task"},
-        "ends": {"Skill", "Concept", "Topic", "Task"},
+        # Skill<->Skill hoặc Knowledge<->Knowledge (đối xứng, cùng label).
+        "starts": {"Skill", "Knowledge"},
+        "ends": {"Skill", "Knowledge"},
         "same_label": True,
         "props": {
-            "weight": {"type": "float", "required": False, "min": 0.0, "max": 1.0, "default": 0.5},
-            "relational_type": {
+            "relation_type": {
                 "type": "string",
                 "required": True,
-                "enum": ["similar", "complementary", "alternative"],
+                "enum": ["similar", "alternative", "complements", "uses", "related"],
             },
         },
     },
-    "PRACTICES": {
-        # Task -> Skill, Project -> Skill
-        "starts": {"Task", "Project"},
-        "ends": {"Skill"},
+    # --- Knowledge Area taxonomy ---
+    "HAS": {
+        # KnowledgeArea -> Knowledge. Ràng buộc: chỉ KnowledgeArea LÁ (không có con
+        # qua PARENT_OF) mới được HAS tới Knowledge — enforce ở importer.
+        "starts": {"KnowledgeArea"},
+        "ends": {"Knowledge"},
+        "start_leaf_of": "PARENT_OF",
         "props": {
-            "weight": {"type": "float", "required": False, "min": 0.0, "max": 1.0},
-            "is_core": {"type": "boolean", "required": False},
+            "weight": {"type": "float", "required": False, "min": 0.0, "max": 1.0, "default": 1.0},
         },
     },
-    "APPLIES": {
-        # Task -> Concept, Project -> Concept
-        "starts": {"Task", "Project"},
-        "ends": {"Concept"},
+    "PARENT_OF": {
+        # KnowledgeArea -> KnowledgeArea (cây phân cấp lĩnh vực).
+        "starts": {"KnowledgeArea"},
+        "ends": {"KnowledgeArea"},
+        "same_label": True,
+        "props": {
+            "order": {"type": "int", "required": False},
+        },
+    },
+    # --- Knowledge <-> Knowledge ---
+    "IS_A": {
+        # Kế thừa kiểu OOP: Knowledge con IS_A Knowledge cha.
+        "starts": {"Knowledge"},
+        "ends": {"Knowledge"},
+        "same_label": True,
         "props": {},
     },
-    # Cross-domain
-    "COVERS": {
-        # Course/Lesson/Content -> Concept.
-        "starts": {"Course", "Lesson", "Content"},
-        "ends": {"Concept"},
-        "props": {
-            "depth": {
-                "type": "string",
-                "required": True,
-                "enum": ["overview", "applied", "deep_dive"],
-            },
-        },
+    "PREREQUISITE": {
+        # Tiên quyết giữa 2 Knowledge.
+        "starts": {"Knowledge"},
+        "ends": {"Knowledge"},
+        "same_label": True,
+        "props": {},
     },
+    # --- Account / Task / Content / Quiz / Mentor (shadow) tới graph-owned ---
     "HAS_SKILL": {
-        "starts": {"User"},
+        "starts": {"Account"},
         "ends": {"Skill"},
         "props": {
             # proficiency: float 0.0–1.0. Ngưỡng map nhãn (frontend map lúc hiển thị):
             #   [0.0, 0.2) = foundational
             #   [0.2, 0.4) = beginner
             #   [0.4, 0.6) = intermediate
-            #   [0.6, 0.8) = advance
+            #   [0.6, 0.8) = advanced
             #   [0.8, 1.0] = expert
             "proficiency": {"type": "float", "required": True, "min": 0.0, "max": 1.0},
             "confidence": {"type": "float", "required": False, "min": 0.0, "max": 1.0},
@@ -124,67 +145,132 @@ RELATIONSHIP_SCHEMA = {
             "lastUpdatedAt": {"type": "datetime", "required": True, "auto": "timestamp"},
         },
     },
-    "TEACHES": {
-        # Course -> Skill, Lesson -> Skill
-        "starts": {"Course", "Lesson"},
+    "PRACTICES": {
+        # Task -> Skill
+        "starts": {"Task"},
         "ends": {"Skill"},
         "props": {
-            "relevance": {"type": "float", "required": False, "min": 0.0, "max": 1.0, "default": 0.5},
+            "weight": {"type": "float", "required": False, "min": 0.0, "max": 1.0},
+            "is_core": {"type": "boolean", "required": False},
         },
+    },
+    "APPLIES": {
+        # Task -> Knowledge
+        "starts": {"Task"},
+        "ends": {"Knowledge"},
+        "props": {},
+    },
+    "COVERS": {
+        # Content -> Knowledge
+        "starts": {"Content"},
+        "ends": {"Knowledge"},
+        "props": {
+            "depth": {
+                "type": "string",
+                "required": True,
+                "enum": ["overview", "applied", "deep_dive"],
+            },
+        },
+    },
+    "ASSESSES": {
+        # Quiz -> Skill / Knowledge (quiz đánh giá skill hoặc knowledge nào).
+        "starts": {"Quiz"},
+        "ends": {"Skill", "Knowledge"},
+        "props": {
+            "level": {
+                "type": "string",
+                "required": True,
+                "enum": ["easy", "medium", "hard", "expert"],
+            },
+            "quiz_tag": {
+                "type": "enum_list",
+                "required": True,
+                "multi": True,
+                "enum": [
+                    "single_choice", "multiple_choice", "true_false",
+                    "fill_in_blank", "matching", "drag_drop",
+                ],
+            },
+            "weight": {"type": "float", "required": False, "min": 0.0, "max": 1.0},
+        },
+    },
+    "COACHES": {
+        # Mentor -> Skill / Knowledge (mentor coach cho skill/knowledge nào).
+        "starts": {"Mentor"},
+        "ends": {"Skill", "Knowledge"},
+        "props": {},
     },
 }
 
-# Node property specifications
-# id, name, description are conventions; level on Skill is the enum
+# Node property specifications.
+# id/name/description là convention. `source`+`status` được nối vào mọi node bên dưới.
+# Kiểu prop mở rộng: string_list (mảng chuỗi, nhập cách nhau bởi dấu phẩy),
+#   enum_list (mảng chọn nhiều từ enum), json (chuỗi JSON hợp lệ).
 NODE_PROP_SCHEMA = {
+    # ---- Graph-owned ----
     "Skill": {
         "id": {"type": "string", "required": True, "primary_key": True},
         "name": {"type": "string", "required": True, "max_len": 200},
         "description": {"type": "string", "required": False, "max_len": 2000},
-        "level": {
+        # level = ĐỘ KHÓ của skill (không phải trình độ người học)
+        "level": {"type": "string", "required": True, "enum": _DIFFICULTY_4},
+        "aliases": {"type": "string_list", "required": False},
+        "practice_resource": {"type": "json", "required": False},
+    },
+    "Knowledge": {
+        "id": {"type": "string", "required": True, "primary_key": True},
+        "name": {"type": "string", "required": True, "max_len": 200},
+        "description": {"type": "string", "required": False, "max_len": 2000},
+        "kind": {
             "type": "string",
             "required": True,
-            "enum": ["foundational", "beginner", "intermediate", "advance", "expert"],
+            "enum": [
+                "concept", "domain", "technique", "data-structure", "algorithm",
+                "architecture", "pattern", "principle", "tool", "framework",
+                "library", "language", "protocol", "standard", "model",
+            ],
         },
+        "aliases": {"type": "string_list", "required": False},
+        "keywords": {"type": "string_list", "required": False},
+        "difficulty": {"type": "string", "required": False, "enum": _DIFFICULTY_4},
+        "deprecated": {"type": "boolean", "required": False},
+        "learning_resource": {"type": "json", "required": False},
     },
-    "Concept": {
+    "KnowledgeArea": {
         "id": {"type": "string", "required": True, "primary_key": True},
         "name": {"type": "string", "required": True, "max_len": 200},
         "description": {"type": "string", "required": False, "max_len": 2000},
+        "aliases": {"type": "string_list", "required": False},
     },
-    "Topic": {
+    "JobRole": {
         "id": {"type": "string", "required": True, "primary_key": True},
         "name": {"type": "string", "required": True, "max_len": 200},
         "description": {"type": "string", "required": False, "max_len": 2000},
+        "level": {"type": "string", "required": False, "enum": ["junior", "middle", "senior"]},
+        "aliases": {"type": "string_list", "required": False},
     },
-    "Task": {
-        "id": {"type": "string", "required": True, "primary_key": True},
-        "name": {"type": "string", "required": True, "max_len": 200},
-        "description": {"type": "string", "required": False, "max_len": 2000},
-    },
-    # Role — graph-owned (auto ROLE-NNN id), vai trò nghề nghiệp user hướng tới.
-    "Role": {
-        "id": {"type": "string", "required": True, "primary_key": True},
-        "name": {"type": "string", "required": True, "max_len": 200},
-        "description": {"type": "string", "required": False, "max_len": 2000},
-    },
-    # Shadow nodes — only ref id from relational DB
-    "User": {
-        "id_user": {"type": "string", "required": True, "primary_key": True},
-    },
-    "Course": {
-        "id_course": {"type": "string", "required": True, "primary_key": True},
-    },
-    "Lesson": {
-        "id_lesson": {"type": "string", "required": True, "primary_key": True},
-    },
-    "Project": {
-        "id_project": {"type": "string", "required": True, "primary_key": True},
+    # ---- Shadow nodes — chỉ ref id (data thật ở relational/Mongo) ----
+    "Account": {
+        "id_account": {"type": "string", "required": True, "primary_key": True},
     },
     "Content": {
         "id_content": {"type": "string", "required": True, "primary_key": True},
     },
+    "Task": {
+        "id_task": {"type": "string", "required": True, "primary_key": True},
+    },
+    "Quiz": {
+        "id_quiz": {"type": "string", "required": True, "primary_key": True},
+    },
+    "Mentor": {
+        "id_mentor": {"type": "string", "required": True, "primary_key": True},
+    },
 }
+
+# Nối source + status vào mọi node (giữ nguyên các prop riêng đã khai ở trên).
+for _lbl, _spec in NODE_PROP_SCHEMA.items():
+    for _k, _v in _COMMON_NODE_PROPS.items():
+        _spec.setdefault(_k, dict(_v))
 
 
 def allowed_ends(rel_spec: dict, start_label: str | None) -> set:
@@ -192,8 +278,8 @@ def allowed_ends(rel_spec: dict, start_label: str | None) -> set:
     End labels hợp lệ cho một relationship khi biết start_label.
 
     Mặc định là rel_spec["ends"]. Nếu có `restrict` và start_label nằm trong đó
-    thì giới hạn theo restrict (vd REQUIRES: Role chỉ được trỏ tới Skill, không
-    tới Concept — dù Skill vẫn được trỏ tới cả Skill lẫn Concept).
+    thì giới hạn theo restrict (vd REQUIRES: JobRole chỉ được trỏ tới Skill, không
+    tới Knowledge — dù Skill vẫn được trỏ tới cả Skill lẫn Knowledge).
     """
     restrict = rel_spec.get("restrict")
     if restrict and start_label in restrict:

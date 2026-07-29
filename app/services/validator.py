@@ -3,6 +3,7 @@ Data Validation Layer.
 
 Trả về (valid_records, errors). errors là list dict { row_index, field, message }.
 """
+import json
 import re
 from typing import Any
 from app.config import NODE_PROP_SCHEMA, RELATIONSHIP_SCHEMA, allowed_ends, primary_key_of
@@ -15,9 +16,24 @@ _TRUE = {"true", "1", "yes", "y", "t"}
 _FALSE = {"false", "0", "no", "n", "f"}
 
 
+def _to_list(value: Any) -> list[str]:
+    """Chuẩn hoá về list chuỗi: nhận sẵn list, hoặc chuỗi phân tách bởi dấu phẩy."""
+    if isinstance(value, (list, tuple)):
+        items = value
+    else:
+        items = str(value).split(",")
+    return [str(v).strip() for v in items if str(v).strip() != ""]
+
+
 def _validate_value(value: Any, spec: dict, field: str) -> tuple[Any, str | None]:
     """Validate single value against a property spec; return (coerced, error_or_None)."""
-    if value is None or (isinstance(value, str) and value.strip() == ""):
+    # rỗng: chuỗi trống, None, hoặc list rỗng
+    is_empty = (
+        value is None
+        or (isinstance(value, str) and value.strip() == "")
+        or (isinstance(value, (list, tuple)) and len(value) == 0)
+    )
+    if is_empty:
         if spec.get("required"):
             return None, f"'{field}' is required"
         # Optional bỏ trống nhưng có default → điền default (vd weight=1.0)
@@ -26,6 +42,39 @@ def _validate_value(value: Any, spec: dict, field: str) -> tuple[Any, str | None
         return None, None
 
     typ = spec["type"]
+
+    if typ == "string_list":
+        # mảng chuỗi tự do (aliases, keywords) — Neo4j lưu string[]
+        items = _to_list(value)
+        if not items:
+            if spec.get("required"):
+                return None, f"'{field}' is required"
+            return None, None
+        return items, None
+
+    if typ == "enum_list":
+        # mảng chọn-nhiều từ enum (quiz_tag) — Neo4j lưu string[]
+        items = _to_list(value)
+        if not items:
+            if spec.get("required"):
+                return None, f"'{field}' is required"
+            return None, None
+        allowed = spec.get("enum", [])
+        bad = [v for v in items if v not in allowed]
+        if bad:
+            return None, f"'{field}' có giá trị không hợp lệ {bad}; cho phép {allowed}"
+        return items, None
+
+    if typ == "json":
+        # chuỗi JSON hợp lệ (practice_resource, learning_resource) — lưu nguyên chuỗi
+        if isinstance(value, (list, dict)):
+            return json.dumps(value, ensure_ascii=False), None
+        s = str(value).strip()
+        try:
+            json.loads(s)
+        except (ValueError, TypeError):
+            return None, f"'{field}' phải là JSON hợp lệ"
+        return s, None
     if typ == "string":
         v = str(value).strip()
         if "max_len" in spec and len(v) > spec["max_len"]:

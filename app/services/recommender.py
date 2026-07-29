@@ -19,82 +19,71 @@ from app.config import (
     primary_key_of,
 )
 
-# Prefix sinh id, theo convention data hien co (SKILL-001, TOPIC-001, ...)
-# Role la graph-owned → cung auto ROLE-NNN. Shadow (User/Course/Lesson/Project/
-# Content) co prefix de goi y so tiep theo, nhung admin van tu go id that.
+# Prefix goi y id (slug co tien to theo loai node, vd skill_react, knowledge_js).
+# Tat ca node gio deu do admin TU GO id (khong con auto LABEL-NNN) — prefix chi
+# dung lam goi y placeholder. Xem needs_manual_id().
 ID_PREFIX = {
     "Skill": "SKILL",
-    "Concept": "CONCEPT",
-    "Topic": "TOPIC",
-    "Task": "TASK",
-    "Role": "ROLE",
-    "User": "USER",
-    "Course": "COURSE",
-    "Lesson": "LESSON",
-    "Project": "PROJECT",
+    "Knowledge": "KNOWLEDGE",
+    "KnowledgeArea": "KNOWLEDGEAREA",
+    "JobRole": "JOBROLE",
+    "Account": "ACCOUNT",
     "Content": "CONTENT",
+    "Task": "TASK",
+    "Quiz": "QUIZ",
+    "Mentor": "MENTOR",
 }
 
-# Shadow node — chi co primary key, data that nam o MySQL.
-# Van tao moi duoc, nhung admin phai TU GO id (de khop voi ben quan he)
-# thay vi de server auto-increment. Xem needs_manual_id().
-# Role KHONG shadow (graph-owned) nen khong nam trong day.
-SHADOW_LABELS = {"User", "Course", "Lesson", "Project", "Content"}
+# Shadow node — chi co primary key, data that nam o relational/Mongo.
+SHADOW_LABELS = {"Account", "Content", "Task", "Quiz", "Mentor"}
 
 # Rel same_label nhung doi xung ve nghia → chi render 1 card, ghi outgoing.
-# PARENT_OF cung same_label nhung co thu bac nen KHONG nam trong day.
+# PARENT_OF/IS_A/PREREQUISITE cung same_label nhung co thu bac/chieu nen KHONG o day.
 SYMMETRIC_RELS = {"RELATED_TO"}
 
 # Nhan tieng Viet cho tung nhanh: (root_label, rel_type, direction, child_label)
 DISPLAY_LABELS = {
-    # --- Topic ---
-    ("Topic", "PARENT_OF", "outgoing", "Topic"): "Topic con",
-    ("Topic", "PARENT_OF", "incoming", "Topic"): "Topic cha",
-    ("Topic", "INCLUDES", "outgoing", "Skill"): "Skill thuộc topic",
-    ("Topic", "INCLUDES", "outgoing", "Concept"): "Concept thuộc topic",
-    ("Topic", "RELATED_TO", "symmetric", "Topic"): "Topic liên quan",
+    # --- KnowledgeArea ---
+    ("KnowledgeArea", "PARENT_OF", "outgoing", "KnowledgeArea"): "Lĩnh vực con",
+    ("KnowledgeArea", "PARENT_OF", "incoming", "KnowledgeArea"): "Lĩnh vực cha",
+    ("KnowledgeArea", "HAS", "outgoing", "Knowledge"): "Knowledge thuộc lĩnh vực",
     # --- Skill ---
     ("Skill", "REQUIRES", "outgoing", "Skill"): "Skill tiên quyết",
-    ("Skill", "REQUIRES", "outgoing", "Concept"): "Concept tiên quyết",
+    ("Skill", "REQUIRES", "outgoing", "Knowledge"): "Knowledge tiên quyết",
     ("Skill", "REQUIRES", "incoming", "Skill"): "Skill cần skill này",
-    ("Skill", "REQUIRES", "incoming", "Role"): "Vai trò cần skill này",
-    ("Skill", "INCLUDES", "incoming", "Topic"): "Topic chứa skill",
+    ("Skill", "REQUIRES", "incoming", "JobRole"): "Vai trò cần skill này",
     ("Skill", "PRACTICES", "incoming", "Task"): "Task luyện skill",
-    ("Skill", "PRACTICES", "incoming", "Project"): "Project luyện skill",
-    ("Skill", "TEACHES", "incoming", "Course"): "Course dạy skill",
-    ("Skill", "TEACHES", "incoming", "Lesson"): "Lesson dạy skill",
-    ("Skill", "HAS_SKILL", "incoming", "User"): "User có skill",
+    ("Skill", "HAS_SKILL", "incoming", "Account"): "Account có skill",
+    ("Skill", "ASSESSES", "incoming", "Quiz"): "Quiz đánh giá skill",
+    ("Skill", "COACHES", "incoming", "Mentor"): "Mentor coach skill",
     ("Skill", "RELATED_TO", "symmetric", "Skill"): "Skill liên quan",
-    # --- Concept ---
-    ("Concept", "PARENT_OF", "outgoing", "Concept"): "Concept con",
-    ("Concept", "PARENT_OF", "incoming", "Concept"): "Concept cha",
-    ("Concept", "INCLUDES", "incoming", "Topic"): "Topic chứa concept",
-    ("Concept", "REQUIRES", "incoming", "Skill"): "Skill cần concept",
-    ("Concept", "APPLIES", "incoming", "Task"): "Task áp dụng concept",
-    ("Concept", "APPLIES", "incoming", "Project"): "Project áp dụng concept",
-    ("Concept", "COVERS", "incoming", "Course"): "Course bao phủ concept",
-    ("Concept", "COVERS", "incoming", "Lesson"): "Lesson bao phủ concept",
-    ("Concept", "COVERS", "incoming", "Content"): "Content bao phủ concept",
-    ("Concept", "RELATED_TO", "symmetric", "Concept"): "Concept liên quan",
-    # --- Task ---
+    # --- Knowledge ---
+    ("Knowledge", "IS_A", "outgoing", "Knowledge"): "Là một loại (cha)",
+    ("Knowledge", "IS_A", "incoming", "Knowledge"): "Loại con kế thừa",
+    ("Knowledge", "PREREQUISITE", "outgoing", "Knowledge"): "Knowledge tiên quyết",
+    ("Knowledge", "PREREQUISITE", "incoming", "Knowledge"): "Knowledge cần cái này trước",
+    ("Knowledge", "HAS", "incoming", "KnowledgeArea"): "Lĩnh vực chứa knowledge",
+    ("Knowledge", "REQUIRES", "incoming", "Skill"): "Skill cần knowledge",
+    ("Knowledge", "APPLIES", "incoming", "Task"): "Task áp dụng knowledge",
+    ("Knowledge", "COVERS", "incoming", "Content"): "Content bao phủ knowledge",
+    ("Knowledge", "ASSESSES", "incoming", "Quiz"): "Quiz đánh giá knowledge",
+    ("Knowledge", "COACHES", "incoming", "Mentor"): "Mentor coach knowledge",
+    ("Knowledge", "RELATED_TO", "symmetric", "Knowledge"): "Knowledge liên quan",
+    # --- JobRole (graph-owned) ---
+    ("JobRole", "REQUIRES", "outgoing", "Skill"): "Skill vai trò cần",
+    # --- Task (shadow) ---
     ("Task", "PRACTICES", "outgoing", "Skill"): "Skill được luyện",
-    ("Task", "APPLIES", "outgoing", "Concept"): "Concept được áp dụng",
-    ("Task", "RELATED_TO", "symmetric", "Task"): "Task liên quan",
-    # --- Role (graph-owned) ---
-    ("Role", "REQUIRES", "outgoing", "Skill"): "Skill vai trò cần",
-    # --- Course (shadow) ---
-    ("Course", "COVERS", "outgoing", "Concept"): "Concept khóa học bao phủ",
-    ("Course", "TEACHES", "outgoing", "Skill"): "Skill khóa học dạy",
-    # --- Lesson (shadow) ---
-    ("Lesson", "TEACHES", "outgoing", "Skill"): "Skill bài học dạy",
-    ("Lesson", "COVERS", "outgoing", "Concept"): "Concept bài học bao phủ",
+    ("Task", "APPLIES", "outgoing", "Knowledge"): "Knowledge được áp dụng",
     # --- Content (shadow) ---
-    ("Content", "COVERS", "outgoing", "Concept"): "Concept nội dung bao phủ",
-    # --- Project (shadow) ---
-    ("Project", "PRACTICES", "outgoing", "Skill"): "Skill dự án luyện",
-    ("Project", "APPLIES", "outgoing", "Concept"): "Concept dự án áp dụng",
-    # --- User (shadow) ---
-    ("User", "HAS_SKILL", "outgoing", "Skill"): "Skill user có",
+    ("Content", "COVERS", "outgoing", "Knowledge"): "Knowledge nội dung bao phủ",
+    # --- Account (shadow) ---
+    ("Account", "HAS_SKILL", "outgoing", "Skill"): "Skill account có",
+    # --- Quiz (shadow) ---
+    ("Quiz", "ASSESSES", "outgoing", "Skill"): "Skill quiz đánh giá",
+    ("Quiz", "ASSESSES", "outgoing", "Knowledge"): "Knowledge quiz đánh giá",
+    # --- Mentor (shadow) ---
+    ("Mentor", "COACHES", "outgoing", "Skill"): "Skill mentor coach",
+    ("Mentor", "COACHES", "outgoing", "Knowledge"): "Knowledge mentor coach",
 }
 
 
@@ -178,10 +167,10 @@ def rel_types_between(start_label: str, end_label: str) -> list[dict]:
 
 def needs_manual_id(label: str) -> bool:
     """
-    Shadow node tro sang ban quan he → id phai khop ben do, khong the
-    auto-increment mu. UI se hien o nhap id (kem goi y so tiep theo).
+    Moi node gio deu do admin TU GO id (slug co tien to theo loai, vd skill_react).
+    Khong con auto-increment LABEL-NNN. UI luon hien o nhap id.
     """
-    return label in SHADOW_LABELS
+    return label in NODE_LABELS
 
 
 def _make_suggestion(root: str, rel_type: str, direction: str, child: str, spec: dict) -> dict:

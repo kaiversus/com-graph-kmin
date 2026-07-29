@@ -10,6 +10,7 @@ from app.config import (
     get_driver,
     NEO4J_DATABASE,
     NODE_LABELS,
+    NODE_REQUIRES_INCOMING,
     RELATIONSHIP_SCHEMA,
     primary_key_of,
 )
@@ -29,6 +30,90 @@ def _auto_ts_sets(rel_type: str) -> str:
         for p, ps in RELATIONSHIP_SCHEMA[rel_type].get("props", {}).items()
         if ps.get("auto") == "timestamp"
     )
+
+
+def _leaf_constraint_pairs() -> list[tuple[str, str]]:
+    """(has_rel, parent_rel) cho moi rel co co `start_leaf_of` — vd (HAS, PARENT_OF)."""
+    return [
+        (rt, spec["start_leaf_of"])
+        for rt, spec in RELATIONSHIP_SCHEMA.items()
+        if spec.get("start_leaf_of")
+    ]
+
+
+def _check_leaf_constraints(tx, relationships: list[dict]) -> None:
+    """
+    Rang buoc la: node vua co con (parent_rel) vua HAS toi Knowledge la sai.
+    Chi KnowledgeArea LA (khong con qua PARENT_OF) moi duoc HAS. Chay sau khi
+    merge xong; vi pham → raise → rollback ca transaction.
+    """
+    for has_rt, parent_rt in _leaf_constraint_pairs():
+        candidates: set[tuple[str, str]] = set()
+        for r in relationships:
+            if r["rel_type"] in (has_rt, parent_rt):
+                candidates.add((r["start_label"], r["start_id"]))
+        for lbl, nid in candidates:
+            pk = primary_key_of(lbl)
+            rec = tx.run(
+                f"MATCH (n:`{lbl}` {{`{pk}`: $id}}) "
+                f"RETURN EXISTS {{ (n)-[:`{has_rt}`]->() }} AS has_has, "
+                f"EXISTS {{ (n)-[:`{parent_rt}`]->() }} AS has_children",
+                id=nid,
+            ).single()
+            if rec and rec["has_has"] and rec["has_children"]:
+                raise ValueError(
+                    f"Rang buoc la vi pham: {lbl}:{nid} vua co con ({parent_rt}) "
+                    f"vua {has_rt} toi Knowledge. Chi KnowledgeArea la moi duoc {has_rt}."
+                )
+
+
+def _check_required_incoming(tx, nodes: list[dict]) -> None:
+    """
+    Rang buoc ton tai: node vua duoc tao (trong `nodes`) thuoc label co trong
+    NODE_REQUIRES_INCOMING phai co it nhat 1 quan he loai do TRO TOI. Vd Knowledge
+    phai duoc 1 REQUIRES tro toi moi duoc ton tai. Chay sau khi merge node + rel;
+    vi pham → raise → rollback (khong tao node mo coi).
+    """
+    for n in nodes:
+        rt = NODE_REQUIRES_INCOMING.get(n["label"])
+        if not rt:
+            continue
+        label = n["label"]
+        pk = primary_key_of(label)
+        node_id = n["props"][pk]
+        rec = tx.run(
+            f"MATCH (n:`{label}` {{`{pk}`: $id}}) "
+            f"RETURN EXISTS {{ ()-[:`{rt}`]->(n) }} AS ok",
+            id=node_id,
+        ).single()
+        if rec and not rec["ok"]:
+            raise ValueError(
+                f"Rang buoc ton tai: {label}:{node_id} phai duoc it nhat 1 quan he "
+                f"{rt} tro toi moi duoc ton tai (khong tao {label} mo coi). "
+                f"Hay tao kem quan he {rt} toi node nay trong cung thao tac."
+            )
+
+
+def _check_not_orphaned_after_rel_delete(tx, rel_type, e_label, e_id) -> None:
+    """
+    Chan viec xoa quan he lam node dau END tro thanh mo coi. Vd xoa REQUIRES cuoi
+    cung tro toi mot Knowledge → Knowledge do het duoc REQUIRES → vi pham rang
+    buoc ton tai → raise → rollback.
+    """
+    if NODE_REQUIRES_INCOMING.get(e_label) != rel_type:
+        return
+    pk = primary_key_of(e_label)
+    rec = tx.run(
+        f"MATCH (n:`{e_label}` {{`{pk}`: $id}}) "
+        f"RETURN EXISTS {{ ()-[:`{rel_type}`]->(n) }} AS ok",
+        id=e_id,
+    ).single()
+    if rec is not None and not rec["ok"]:
+        raise ValueError(
+            f"Rang buoc ton tai: khong the xoa {rel_type} cuoi cung tro toi "
+            f"{e_label}:{e_id} — se lam node nay mo coi. Xoa han node truoc, hoac "
+            f"noi {rel_type} khac toi no truoc khi xoa quan he nay."
+        )
 
 
 # ---- Cypher generators (label/type whitelisted; properties parameterized) ----
@@ -174,6 +259,12 @@ def _do_import(
             )
         rels_written += actual_count
 
+    # 3b. Rang buoc la (KnowledgeArea HAS Knowledge chi khi la node la) ----------
+    _check_leaf_constraints(tx, relationships)
+
+    # 3c. Rang buoc ton tai (Knowledge phai duoc REQUIRES tro toi) ---------------
+    _check_required_incoming(tx, nodes)
+
     # 4. Mark committed ----------------------------------------------------------
     update_audit_status(tx, audit_id, "committed")
 
@@ -272,6 +363,8 @@ def _do_delete_rel(tx, actor, rel_type, s_label, s_id, e_label, e_id) -> dict:
         f"(e:`{e_label}` {{`{e_pk}`: $e_id}}) DELETE r",
         s_id=s_id, e_id=e_id,
     )
+    # chan lam node END mo coi (vd xoa REQUIRES cuoi cung toi 1 Knowledge)
+    _check_not_orphaned_after_rel_delete(tx, rel_type, e_label, e_id)
     update_audit_status(tx, audit_id, "committed")
     return {"audit_id": audit_id, "deleted_rel": f"{rel_type} {s_label}:{s_id}->{e_label}:{e_id}"}
 
@@ -332,7 +425,7 @@ def _do_restore(tx: ManagedTransaction, audit_id: str) -> dict:
     }
 
     def _split_rel(rsum):
-        # rsum: {"type": "TEACHES", "start": "Course:c1", "end": "Skill:s1"}
+        # rsum: {"type": "COVERS", "start": "Content:c1", "end": "Knowledge:k1"}
         s_label, s_id = rsum["start"].split(":", 1)
         e_label, e_id = rsum["end"].split(":", 1)
         return rsum["type"], s_label, s_id, e_label, e_id

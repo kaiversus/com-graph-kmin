@@ -219,8 +219,8 @@ def get_neighborhood(label: str, node_id: str, limit: int = 40):
                 "RETURN type(rel) AS rel_type, "
                 "       startNode(rel) = r AS outgoing, "
                 "       labels(n)[0] AS label, "
-                "       coalesce(n.id, n.id_user, n.id_course) AS id, "
-                "       coalesce(n.name, n.id_user, n.id_course) AS name "
+                "       coalesce(n.id, n.id_account, n.id_content, n.id_task, n.id_quiz, n.id_mentor) AS id, "
+                "       coalesce(n.name, n.id_account, n.id_content, n.id_task, n.id_quiz, n.id_mentor) AS name "
                 "LIMIT $limit",
                 id=node_id, limit=limit,
             ).data()

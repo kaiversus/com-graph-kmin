@@ -4,16 +4,20 @@ import { attachGraphZoom } from './core.js';
 
 let vizNetwork = null;
 const LABEL_COLORS = {
-  Skill:   { background: '#4c51bf', border: '#667eea', highlight: { background: '#667eea', border: '#a5b4fc' } },
-  Concept: { background: '#276749', border: '#48bb78', highlight: { background: '#48bb78', border: '#9ae6b4' } },
-  Topic:   { background: '#b7791f', border: '#f6ad55', highlight: { background: '#f6ad55', border: '#fbd38d' } },
-  Task:    { background: '#9b2c2c', border: '#fc8181', highlight: { background: '#fc8181', border: '#fed7d7' } },
-  User:    { background: '#086f83', border: '#4fd1c5', highlight: { background: '#4fd1c5', border: '#b2f5ea' } },
-  Course:  { background: '#6b21a8', border: '#c084fc', highlight: { background: '#c084fc', border: '#e9d5ff' } },
+  Skill:         { background: '#4c51bf', border: '#667eea', highlight: { background: '#667eea', border: '#a5b4fc' } },
+  Knowledge:     { background: '#276749', border: '#48bb78', highlight: { background: '#48bb78', border: '#9ae6b4' } },
+  KnowledgeArea: { background: '#b7791f', border: '#f6ad55', highlight: { background: '#f6ad55', border: '#fbd38d' } },
+  JobRole:       { background: '#4338ca', border: '#818cf8', highlight: { background: '#818cf8', border: '#c7d2fe' } },
+  Task:          { background: '#9b2c2c', border: '#fc8181', highlight: { background: '#fc8181', border: '#fed7d7' } },
+  Account:       { background: '#086f83', border: '#4fd1c5', highlight: { background: '#4fd1c5', border: '#b2f5ea' } },
+  Content:       { background: '#6b21a8', border: '#c084fc', highlight: { background: '#c084fc', border: '#e9d5ff' } },
+  Quiz:          { background: '#be185d', border: '#f472b6', highlight: { background: '#f472b6', border: '#fbcfe8' } },
+  Mentor:        { background: '#0f766e', border: '#2dd4bf', highlight: { background: '#2dd4bf', border: '#99f6e4' } },
 };
 const LABEL_NAME_FIELD = {
-  Skill: 'name', Concept: 'name', Topic: 'name', Task: 'name',
-  User: 'id_user', Course: 'id_course',
+  Skill: 'name', Knowledge: 'name', KnowledgeArea: 'name', JobRole: 'name',
+  Account: 'id_account', Content: 'id_content', Task: 'id_task',
+  Quiz: 'id_quiz', Mentor: 'id_mentor',
 };
 
 function buildTooltipEl(label, props) {
@@ -231,7 +235,8 @@ function showNodeDetailPanel(label, props) {
   const color = LABEL_COLORS[label] || { background: '#4a5568', border: '#718096' };
   title.textContent = label;
 
-  const pk = props.id || props.id_user || props.id_course || Object.values(props)[0] || '';
+  const pk = props.id || props.id_account || props.id_content || props.id_task
+           || props.id_quiz || props.id_mentor || Object.values(props)[0] || '';
 
   let html = `<span class="ndp-label-badge" style="background:${color.background};color:#fff;border:1px solid ${color.border}">${label}</span>`;
 
@@ -299,7 +304,7 @@ document.getElementById('viz-render').addEventListener('click', renderViz);
 // QUICK QUERIES
 // ===========================================================
 async function loadQuickQueryOptions() {
-  for (const [label, selId] of [['Skill', 'qq-skill'], ['Concept', 'qq-concept'], ['Course', 'qq-course']]) {
+  for (const [label, selId] of [['Skill', 'qq-skill'], ['Skill', 'qq-skill2'], ['KnowledgeArea', 'qq-area']]) {
     try {
       const r = await fetch(`/api/graph/options/${label}`);
       const items = await r.json();
@@ -331,22 +336,22 @@ async function runQuickQuery(url, emptyMsg) {
   }
 }
 
-document.getElementById('qq-btn-users-by-skill').addEventListener('click', () => {
+document.getElementById('qq-btn-accounts-by-skill').addEventListener('click', () => {
   const v = document.getElementById('qq-skill').value;
   if (!v) { alert('Chọn Skill trước.'); return; }
-  runQuickQuery(`/api/graph/query/users-by-skill/${encodeURIComponent(v)}`, 'Không có User nào có Skill này.');
+  runQuickQuery(`/api/graph/query/accounts-by-skill/${encodeURIComponent(v)}`, 'Không có Account nào có Skill này.');
 });
 
-document.getElementById('qq-btn-courses-by-concept').addEventListener('click', () => {
-  const v = document.getElementById('qq-concept').value;
-  if (!v) { alert('Chọn Concept trước.'); return; }
-  runQuickQuery(`/api/graph/query/courses-by-concept/${encodeURIComponent(v)}`, 'Không có Course nào covers Concept này.');
+document.getElementById('qq-btn-quizzes-by-skill').addEventListener('click', () => {
+  const v = document.getElementById('qq-skill2').value;
+  if (!v) { alert('Chọn Skill trước.'); return; }
+  runQuickQuery(`/api/graph/query/quizzes-by-skill/${encodeURIComponent(v)}`, 'Không có Quiz nào đánh giá Skill này.');
 });
 
-document.getElementById('qq-btn-skills-by-course').addEventListener('click', () => {
-  const v = document.getElementById('qq-course').value;
-  if (!v) { alert('Chọn Course trước.'); return; }
-  runQuickQuery(`/api/graph/query/skills-by-course/${encodeURIComponent(v)}`, 'Không có Skill nào trong Course này.');
+document.getElementById('qq-btn-knowledge-by-area').addEventListener('click', () => {
+  const v = document.getElementById('qq-area').value;
+  if (!v) { alert('Chọn KnowledgeArea trước.'); return; }
+  runQuickQuery(`/api/graph/query/knowledge-by-area/${encodeURIComponent(v)}`, 'Không có Knowledge nào trong Area này.');
 });
 
 document.getElementById('viz-wipe').addEventListener('click', async () => {

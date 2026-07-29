@@ -240,19 +240,19 @@
     <div class="quick-query-bar">
       <h3>Quick Queries</h3>
       <div class="qq-row">
-        <label>Users co Skill:</label>
+        <label>Accounts có Skill:</label>
         <select id="qq-skill"><option value="">-- chọn Skill --</option></select>
-        <button id="qq-btn-users-by-skill" type="button">Query</button>
+        <button id="qq-btn-accounts-by-skill" type="button">Query</button>
       </div>
       <div class="qq-row">
-        <label>Courses trong Concept:</label>
-        <select id="qq-concept"><option value="">-- chọn Concept --</option></select>
-        <button id="qq-btn-courses-by-concept" type="button">Query</button>
+        <label>Quizzes đánh giá Skill:</label>
+        <select id="qq-skill2"><option value="">-- chọn Skill --</option></select>
+        <button id="qq-btn-quizzes-by-skill" type="button">Query</button>
       </div>
       <div class="qq-row">
-        <label>Skills trong Course:</label>
-        <select id="qq-course"><option value="">-- chọn Course --</option></select>
-        <button id="qq-btn-skills-by-course" type="button">Query</button>
+        <label>Knowledge trong Area:</label>
+        <select id="qq-area"><option value="">-- chọn KnowledgeArea --</option></select>
+        <button id="qq-btn-knowledge-by-area" type="button">Query</button>
       </div>
     </div>
 
@@ -292,39 +292,39 @@
   <section id="roadmap" class="panel">
     <div class="roadmap-header">
       <h2>Learning Roadmap</h2>
-      <p class="roadmap-subtitle">Chọn khóa học hoặc chủ đề để xem lộ trình học tập. Sơ đồ hiển thị từ trên xuống dưới theo thứ tự nên học.</p>
+      <p class="roadmap-subtitle">Chọn vai trò (JobRole) hoặc lĩnh vực (KnowledgeArea) để xem lộ trình. Sơ đồ hiển thị từ trên xuống dưới theo thứ tự nên học.</p>
     </div>
 
     <div class="roadmap-controls">
       <div class="roadmap-source-group">
-        <div class="roadmap-source-card" id="rm-source-course">
-          <div class="rsc-icon">📘</div>
+        <div class="roadmap-source-card" id="rm-source-role">
+          <div class="rsc-icon">🧭</div>
           <div class="rsc-body">
-            <label>Chọn khóa học</label>
-            <select id="rm-course-sel">
-              <option value="">-- Chọn Course --</option>
+            <label>Chọn vai trò</label>
+            <select id="rm-role-sel">
+              <option value="">-- Chọn JobRole --</option>
             </select>
           </div>
-          <button id="rm-gen-course" type="button" class="roadmap-gen-btn">Tạo Roadmap</button>
+          <button id="rm-gen-role" type="button" class="roadmap-gen-btn">Tạo Roadmap</button>
         </div>
-        <div class="roadmap-source-card" id="rm-source-topic">
+        <div class="roadmap-source-card" id="rm-source-area">
           <div class="rsc-icon">📂</div>
           <div class="rsc-body">
-            <label>Chọn chủ đề</label>
-            <select id="rm-topic-sel">
-              <option value="">-- Chọn Topic --</option>
+            <label>Chọn lĩnh vực</label>
+            <select id="rm-area-sel">
+              <option value="">-- Chọn KnowledgeArea --</option>
             </select>
           </div>
-          <button id="rm-gen-topic" type="button" class="roadmap-gen-btn">Tạo Roadmap</button>
+          <button id="rm-gen-area" type="button" class="roadmap-gen-btn">Tạo Roadmap</button>
         </div>
       </div>
     </div>
 
     <div id="rm-legend" class="roadmap-legend" style="display:none">
-      <span class="rm-legend-item"><span class="rm-dot rm-dot-root"></span> Khóa học / Chủ đề</span>
+      <span class="rm-legend-item"><span class="rm-dot rm-dot-root"></span> Vai trò / Lĩnh vực</span>
       <span class="rm-legend-item"><span class="rm-dot rm-dot-level"></span> Cấp độ</span>
       <span class="rm-legend-item"><span class="rm-dot rm-dot-skill"></span> Kỹ năng</span>
-      <span class="rm-legend-item"><span class="rm-dot rm-dot-concept"></span> Khái niệm</span>
+      <span class="rm-legend-item"><span class="rm-dot rm-dot-concept"></span> Knowledge</span>
       <span class="rm-legend-item"><span class="rm-dot rm-dot-prereq"></span> Điều kiện tiên quyết</span>
     </div>
 

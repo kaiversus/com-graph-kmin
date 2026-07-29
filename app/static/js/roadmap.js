@@ -1,13 +1,12 @@
-// ===== Roadmap — cay lo trinh tu Course/Topic =====
+// ===== Roadmap — cay lo trinh tu JobRole / KnowledgeArea =====
 
 const RM_NODE_STYLES = {
-  Course:       { bg: '#4f46e5', border: '#3730a3', shape: 'box',     size: 30, fontColor: '#fff', fontFace: 'sans-serif', fontSize: 16 },
-  Topic:        { bg: '#7c3aed', border: '#5b21b6', shape: 'box',     size: 28, fontColor: '#fff', fontFace: 'sans-serif', fontSize: 16 },
-  Level:        { bg: '#f59e0b', border: '#d97706', shape: 'box',     size: 22, fontColor: '#fff', fontFace: 'sans-serif', fontSize: 14 },
-  Skill:        { bg: '#3b82f6', border: '#2563eb', shape: 'box',     size: 20, fontColor: '#fff', fontFace: 'sans-serif', fontSize: 13 },
-  Concept:      { bg: '#10b981', border: '#059669', shape: 'box',     size: 18, fontColor: '#fff', fontFace: 'sans-serif', fontSize: 13 },
-  ConceptGroup: { bg: '#10b981', border: '#047857', shape: 'box',     size: 22, fontColor: '#fff', fontFace: 'sans-serif', fontSize: 14 },
-  Prerequisite: { bg: '#ef4444', border: '#dc2626', shape: 'box',     size: 16, fontColor: '#fff', fontFace: 'sans-serif', fontSize: 12 },
+  JobRole:       { bg: '#4f46e5', border: '#3730a3', shape: 'box',     size: 30, fontColor: '#fff', fontFace: 'sans-serif', fontSize: 16 },
+  KnowledgeArea: { bg: '#7c3aed', border: '#5b21b6', shape: 'box',     size: 28, fontColor: '#fff', fontFace: 'sans-serif', fontSize: 16 },
+  Level:         { bg: '#f59e0b', border: '#d97706', shape: 'box',     size: 22, fontColor: '#fff', fontFace: 'sans-serif', fontSize: 14 },
+  Skill:         { bg: '#3b82f6', border: '#2563eb', shape: 'box',     size: 20, fontColor: '#fff', fontFace: 'sans-serif', fontSize: 13 },
+  Knowledge:     { bg: '#10b981', border: '#059669', shape: 'box',     size: 18, fontColor: '#fff', fontFace: 'sans-serif', fontSize: 13 },
+  Prerequisite:  { bg: '#ef4444', border: '#dc2626', shape: 'box',     size: 16, fontColor: '#fff', fontFace: 'sans-serif', fontSize: 12 },
 };
 
 let rmNetwork = null;
@@ -16,13 +15,13 @@ async function loadRoadmapSources() {
   try {
     const r = await fetch('/api/roadmap/sources');
     const data = await r.json();
-    const cSel = document.getElementById('rm-course-sel');
-    cSel.innerHTML = '<option value="">-- Chọn Course --</option>';
-    data.courses.forEach(c => cSel.appendChild(new Option(c.name || c.id, c.id)));
+    const rSel = document.getElementById('rm-role-sel');
+    rSel.innerHTML = '<option value="">-- Chọn JobRole --</option>';
+    (data.roles || []).forEach(x => rSel.appendChild(new Option(x.name || x.id, x.id)));
 
-    const tSel = document.getElementById('rm-topic-sel');
-    tSel.innerHTML = '<option value="">-- Chọn Topic --</option>';
-    data.topics.forEach(t => tSel.appendChild(new Option(t.name || t.id, t.id)));
+    const aSel = document.getElementById('rm-area-sel');
+    aSel.innerHTML = '<option value="">-- Chọn KnowledgeArea --</option>';
+    (data.areas || []).forEach(x => aSel.appendChild(new Option(x.name || x.id, x.id)));
   } catch (e) {
     console.warn('[roadmap] Failed to load sources:', e);
   }
@@ -35,7 +34,7 @@ function renderRoadmap(data) {
   canvas.innerHTML = '<div id="rm-tree"></div>';
 
   if (!data.nodes.length) {
-    canvas.innerHTML = '<div class="roadmap-empty-state"><div class="res-icon">📭</div><h3>Không có dữ liệu</h3><p>Khóa học/chủ đề này chưa có skills hoặc concepts nào.</p></div>';
+    canvas.innerHTML = '<div class="roadmap-empty-state"><div class="res-icon">📭</div><h3>Không có dữ liệu</h3><p>Vai trò/lĩnh vực này chưa có skills hoặc knowledge nào.</p></div>';
     return;
   }
 
@@ -160,12 +159,12 @@ function renderRoadmap(data) {
   });
 }
 
-document.getElementById('rm-gen-course').addEventListener('click', async () => {
-  const v = document.getElementById('rm-course-sel').value;
-  if (!v) { alert('Chọn Course trước.'); return; }
+document.getElementById('rm-gen-role').addEventListener('click', async () => {
+  const v = document.getElementById('rm-role-sel').value;
+  if (!v) { alert('Chọn JobRole trước.'); return; }
   document.getElementById('rm-canvas').innerHTML = '<div style="padding:40px;text-align:center;color:#64748b;font-size:16px">Đang tạo roadmap...</div>';
   try {
-    const r = await fetch(`/api/roadmap/by-course/${encodeURIComponent(v)}`);
+    const r = await fetch(`/api/roadmap/by-role/${encodeURIComponent(v)}`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     renderRoadmap(await r.json());
   } catch (e) {
@@ -173,12 +172,12 @@ document.getElementById('rm-gen-course').addEventListener('click', async () => {
   }
 });
 
-document.getElementById('rm-gen-topic').addEventListener('click', async () => {
-  const v = document.getElementById('rm-topic-sel').value;
-  if (!v) { alert('Chọn Topic trước.'); return; }
+document.getElementById('rm-gen-area').addEventListener('click', async () => {
+  const v = document.getElementById('rm-area-sel').value;
+  if (!v) { alert('Chọn KnowledgeArea trước.'); return; }
   document.getElementById('rm-canvas').innerHTML = '<div style="padding:40px;text-align:center;color:#64748b;font-size:16px">Đang tạo roadmap...</div>';
   try {
-    const r = await fetch(`/api/roadmap/by-topic/${encodeURIComponent(v)}`);
+    const r = await fetch(`/api/roadmap/by-area/${encodeURIComponent(v)}`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     renderRoadmap(await r.json());
   } catch (e) {

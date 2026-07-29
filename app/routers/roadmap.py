@@ -1,8 +1,10 @@
 """
-Roadmap — dung cay lo trinh hoc tu 1 Course hoac 1 Topic.
+Roadmap — cây lộ trình từ 1 JobRole hoặc 1 KnowledgeArea.
 
-Ca 2 nguon deu quy ve cung mot cau truc phang { nodes, edges } qua
-_build_roadmap_tree(), de FE chi phai viet 1 ham ve.
+- by-role: JobRole -REQUIRES-> Skill (nhóm theo level) -REQUIRES-> tiên quyết (Skill/Knowledge)
+- by-area: KnowledgeArea -PARENT_OF-> lĩnh vực con, và -HAS-> Knowledge
+
+Cả 2 nguồn quy về cùng cấu trúc phẳng { root, nodes, edges } để FE chỉ viết 1 hàm vẽ.
 """
 from fastapi import APIRouter, HTTPException
 
@@ -10,135 +12,108 @@ from app.config import get_driver, NEO4J_DATABASE
 
 router = APIRouter(prefix="/api", tags=["roadmap"])
 
-SKILL_LEVELS = ["foundational", "beginner", "intermediate", "advance", "expert"]
-CONCEPT_DEPTHS = ["overview", "applied", "deep_dive"]
+SKILL_LEVELS = ["beginner", "intermediate", "advanced", "expert"]
 
 
 @router.get("/roadmap/sources")
 def roadmap_sources():
-    """List available starting points for roadmap: courses and topics."""
+    """List available starting points for roadmap: job roles and knowledge areas."""
     driver = get_driver()
     with driver.session(database=NEO4J_DATABASE) as session:
-        courses = session.run(
-            "MATCH (c:Course) RETURN c.id_course AS id, "
-            "coalesce(c.name, c.id_course) AS name ORDER BY name"
+        roles = session.run(
+            "MATCH (r:JobRole) RETURN r.id AS id, r.name AS name ORDER BY name"
         ).data()
-        topics = session.run(
-            "MATCH (t:Topic) RETURN t.id AS id, t.name AS name ORDER BY name"
+        areas = session.run(
+            "MATCH (a:KnowledgeArea) RETURN a.id AS id, a.name AS name ORDER BY name"
         ).data()
-    return {"courses": courses, "topics": topics}
+    return {"roles": roles, "areas": areas}
 
 
-@router.get("/roadmap/by-course/{course_id}")
-def roadmap_by_course(course_id: str):
-    """Build a top-down roadmap tree for a course.
+@router.get("/roadmap/by-role/{role_id}")
+def roadmap_by_role(role_id: str):
+    """Build a top-down roadmap for a job role.
 
-    Structure:  Course → Skills (via TEACHES) → Prerequisites (via REQUIRES)
-                Course → Concepts (via COVERS) → Sub-concepts (via PARENT_OF)
+    Structure:  JobRole → Skills (via REQUIRES, nhóm theo level)
+                        → Prerequisites (Skill/Knowledge, via REQUIRES)
     """
     driver = get_driver()
     with driver.session(database=NEO4J_DATABASE) as session:
-        course_rec = session.run(
-            "MATCH (c:Course {id_course: $cid}) "
-            "RETURN c.id_course AS id, coalesce(c.name, c.id_course) AS name",
-            cid=course_id,
+        role_rec = session.run(
+            "MATCH (r:JobRole {id: $rid}) RETURN r.id AS id, r.name AS name",
+            rid=role_id,
         ).single()
-        if not course_rec:
-            raise HTTPException(404, "Course not found")
+        if not role_rec:
+            raise HTTPException(404, "JobRole not found")
 
         skills = session.run(
-            "MATCH (c:Course {id_course: $cid})-[r:TEACHES]->(s:Skill) "
-            "RETURN s.id AS id, s.name AS name, s.level AS level, "
-            "       r.relevance AS relevance ORDER BY s.level, s.name",
-            cid=course_id,
-        ).data()
-
-        concepts = session.run(
-            "MATCH (c:Course {id_course: $cid})-[r:COVERS]->(co:Concept) "
-            "RETURN co.id AS id, co.name AS name, r.depth AS depth "
-            "ORDER BY r.depth, co.name",
-            cid=course_id,
-        ).data()
-
-        prereqs = session.run(
-            "MATCH (c:Course {id_course: $cid})-[:TEACHES]->(s:Skill)-[:REQUIRES]->(p:Skill) "
-            "RETURN s.id AS skill_id, p.id AS prereq_id, p.name AS prereq_name, "
-            "       p.level AS prereq_level",
-            cid=course_id,
-        ).data()
-
-        concept_children = session.run(
-            "MATCH (c:Course {id_course: $cid})-[:COVERS]->(co:Concept)"
-            "<-[:PARENT_OF]-(parent:Concept) "
-            "RETURN co.id AS child_id, parent.id AS parent_id, parent.name AS parent_name",
-            cid=course_id,
-        ).data()
-
-    return _build_roadmap_tree(
-        root={"id": course_rec["id"], "name": course_rec["name"], "type": "Course"},
-        skills=skills,
-        concepts=concepts,
-        prereqs=prereqs,
-        concept_children=concept_children,
-    )
-
-
-@router.get("/roadmap/by-topic/{topic_id}")
-def roadmap_by_topic(topic_id: str):
-    """Build a top-down roadmap tree for a topic.
-
-    Structure: Topic → Skills/Concepts (via INCLUDES) → Prerequisites
-    """
-    driver = get_driver()
-    with driver.session(database=NEO4J_DATABASE) as session:
-        topic_rec = session.run(
-            "MATCH (t:Topic {id: $tid}) RETURN t.id AS id, t.name AS name",
-            tid=topic_id,
-        ).single()
-        if not topic_rec:
-            raise HTTPException(404, "Topic not found")
-
-        skills = session.run(
-            "MATCH (t:Topic {id: $tid})-[:INCLUDES]->(s:Skill) "
+            "MATCH (r:JobRole {id: $rid})-[:REQUIRES]->(s:Skill) "
             "RETURN s.id AS id, s.name AS name, s.level AS level "
             "ORDER BY s.level, s.name",
-            tid=topic_id,
+            rid=role_id,
         ).data()
 
-        concepts = session.run(
-            "MATCH (t:Topic {id: $tid})-[:INCLUDES]->(co:Concept) "
-            "RETURN co.id AS id, co.name AS name, 'applied' AS depth "
-            "ORDER BY co.name",
-            tid=topic_id,
-        ).data()
-
+        # tiên quyết của các skill: Skill -REQUIRES-> Skill/Knowledge
         prereqs = session.run(
-            "MATCH (t:Topic {id: $tid})-[:INCLUDES]->(s:Skill)-[:REQUIRES]->(p:Skill) "
+            "MATCH (r:JobRole {id: $rid})-[:REQUIRES]->(s:Skill)-[:REQUIRES]->(p) "
+            "WHERE p:Skill OR p:Knowledge "
             "RETURN s.id AS skill_id, p.id AS prereq_id, p.name AS prereq_name, "
-            "       p.level AS prereq_level",
-            tid=topic_id,
+            "       head(labels(p)) AS prereq_type, p.level AS prereq_level",
+            rid=role_id,
         ).data()
 
-    return _build_roadmap_tree(
-        root={"id": topic_rec["id"], "name": topic_rec["name"], "type": "Topic"},
+    return _build_role_tree(
+        root={"id": role_rec["id"], "name": role_rec["name"], "type": "JobRole"},
         skills=skills,
-        concepts=concepts,
         prereqs=prereqs,
-        concept_children=[],
     )
 
 
-def _build_roadmap_tree(root, skills, concepts, prereqs, concept_children):
-    """Build a flat node+edge list structured for hierarchical rendering.
+@router.get("/roadmap/by-area/{area_id}")
+def roadmap_by_area(area_id: str):
+    """Build a roadmap for a knowledge area.
 
-    TODO: `concept_children` chua duoc dung — roadmap_by_course van chay query
-    PARENT_OF de lay no roi vut di. Hoac ve sub-concept vao cay, hoac bo han
-    query do di cho do 1 round-trip.
+    Structure: KnowledgeArea → sub-areas (via PARENT_OF) → Knowledge (via HAS)
+               KnowledgeArea → Knowledge (via HAS, nếu là lĩnh vực lá)
     """
-    nodes = [{"id": f"root_{root['id']}", "label": root["name"],
-              "type": root["type"], "level": 0, "meta": ""}]
+    driver = get_driver()
+    with driver.session(database=NEO4J_DATABASE) as session:
+        area_rec = session.run(
+            "MATCH (a:KnowledgeArea {id: $aid}) RETURN a.id AS id, a.name AS name",
+            aid=area_id,
+        ).single()
+        if not area_rec:
+            raise HTTPException(404, "KnowledgeArea not found")
+
+        subareas = session.run(
+            "MATCH (a:KnowledgeArea {id: $aid})-[r:PARENT_OF]->(c:KnowledgeArea) "
+            "RETURN c.id AS id, c.name AS name, r.order AS ord "
+            "ORDER BY coalesce(r.order, 9999), c.name",
+            aid=area_id,
+        ).data()
+
+        # Knowledge của chính area + của các lĩnh vực con (1 cấp)
+        knowledge = session.run(
+            "MATCH (a:KnowledgeArea {id: $aid}) "
+            "MATCH (owner:KnowledgeArea)-[:HAS]->(k:Knowledge) "
+            "WHERE owner = a OR (a)-[:PARENT_OF]->(owner) "
+            "RETURN owner.id AS area_id, k.id AS id, k.name AS name, k.kind AS kind "
+            "ORDER BY k.name",
+            aid=area_id,
+        ).data()
+
+    return _build_area_tree(
+        root={"id": area_rec["id"], "name": area_rec["name"], "type": "KnowledgeArea"},
+        subareas=subareas,
+        knowledge=knowledge,
+    )
+
+
+def _build_role_tree(root, skills, prereqs):
+    """Flat node+edge list: role → level groups → skills → prerequisites."""
+    root_id = f"root_{root['id']}"
+    nodes = [{"id": root_id, "label": root["name"], "type": root["type"], "level": 0, "meta": ""}]
     edges = []
-    seen_ids = {nodes[0]["id"]}
+    seen = {root_id}
 
     skill_groups: dict[str, list] = {}
     for s in skills:
@@ -151,18 +126,17 @@ def _build_roadmap_tree(root, skills, concepts, prereqs, concept_children):
         if not group:
             continue
         group_id = f"level_{lvl}"
-        nodes.append({"id": group_id, "label": lvl.replace("_", " ").title(),
-                       "type": "Level", "level": level_idx, "meta": f"{len(group)} skills"})
-        edges.append({"from": nodes[0]["id"], "to": group_id})
-        seen_ids.add(group_id)
+        nodes.append({"id": group_id, "label": lvl.title(), "type": "Level",
+                      "level": level_idx, "meta": f"{len(group)} skills"})
+        edges.append({"from": root_id, "to": group_id})
+        seen.add(group_id)
         level_idx += 1
-
         for s in group:
             sid = f"skill_{s['id']}"
-            if sid not in seen_ids:
+            if sid not in seen:
                 nodes.append({"id": sid, "label": s["name"], "type": "Skill",
                               "level": level_idx, "meta": lvl})
-                seen_ids.add(sid)
+                seen.add(sid)
             edges.append({"from": group_id, "to": sid})
 
     prereq_map: dict[str, list] = {}
@@ -172,28 +146,44 @@ def _build_roadmap_tree(root, skills, concepts, prereqs, concept_children):
         sid = f"skill_{skill_id}"
         for p in plist:
             pid = f"prereq_{p['prereq_id']}"
-            if pid not in seen_ids:
+            if pid not in seen:
                 nodes.append({"id": pid, "label": p["prereq_name"],
-                              "type": "Prerequisite", "level": level_idx + 1,
-                              "meta": p.get("prereq_level", "")})
-                seen_ids.add(pid)
+                              "type": p.get("prereq_type") or "Prerequisite",
+                              "level": level_idx + 1, "meta": p.get("prereq_level") or "tiên quyết"})
+                seen.add(pid)
             edges.append({"from": sid, "to": pid, "style": "dashed"})
 
-    if concepts:
-        concept_group_id = "group_concepts"
-        nodes.append({"id": concept_group_id, "label": "Concepts",
-                       "type": "ConceptGroup", "level": 1, "meta": f"{len(concepts)} concepts"})
-        edges.append({"from": nodes[0]["id"], "to": concept_group_id})
-        seen_ids.add(concept_group_id)
+    return {"root": root, "nodes": nodes, "edges": edges}
 
-        for depth_key in CONCEPT_DEPTHS:
-            depth_concepts = [c for c in concepts if c.get("depth") == depth_key]
-            for c in depth_concepts:
-                cid = f"concept_{c['id']}"
-                if cid not in seen_ids:
-                    nodes.append({"id": cid, "label": c["name"], "type": "Concept",
-                                  "level": 2, "meta": depth_key.replace("_", " ")})
-                    seen_ids.add(cid)
-                edges.append({"from": concept_group_id, "to": cid})
+
+def _build_area_tree(root, subareas, knowledge):
+    """Flat node+edge list: area → sub-areas → knowledge (grouped by owning area)."""
+    root_id = f"root_{root['id']}"
+    nodes = [{"id": root_id, "label": root["name"], "type": root["type"], "level": 0, "meta": ""}]
+    edges = []
+    seen = {root_id}
+
+    # sub-areas là con trực tiếp
+    for a in subareas:
+        aid = f"area_{a['id']}"
+        if aid not in seen:
+            nodes.append({"id": aid, "label": a["name"], "type": "KnowledgeArea",
+                          "level": 1, "meta": "lĩnh vực con"})
+            seen.add(aid)
+        edges.append({"from": root_id, "to": aid})
+
+    # knowledge nối vào area sở hữu (root hoặc sub-area)
+    for k in knowledge:
+        kid = f"knowledge_{k['id']}"
+        owner = k["area_id"]
+        parent_id = root_id if owner == root["id"] else f"area_{owner}"
+        if parent_id not in seen:
+            # owner là sub-area chưa xuất hiện (an toàn): neo tạm vào root
+            parent_id = root_id
+        if kid not in seen:
+            nodes.append({"id": kid, "label": k["name"], "type": "Knowledge",
+                          "level": 2, "meta": k.get("kind") or ""})
+            seen.add(kid)
+        edges.append({"from": parent_id, "to": kid})
 
     return {"root": root, "nodes": nodes, "edges": edges}

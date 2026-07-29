@@ -85,45 +85,43 @@ _PAIR_RETURN = (
 )
 
 
-@router.get("/graph/query/users-by-skill/{skill_id}")
-def users_by_skill(skill_id: str):
-    """Users that HAS_SKILL a specific Skill, plus the skill node itself."""
+@router.get("/graph/query/accounts-by-skill/{skill_id}")
+def accounts_by_skill(skill_id: str):
+    """Accounts that HAS_SKILL a specific Skill, plus the skill node itself."""
     return _pair_result(
-        f"MATCH (a:User)-[r:HAS_SKILL]->(b:Skill {{id: $sid}}) {_PAIR_RETURN}",
+        f"MATCH (a:Account)-[r:HAS_SKILL]->(b:Skill {{id: $sid}}) {_PAIR_RETURN}",
         sid=skill_id,
     )
 
 
-@router.get("/graph/query/courses-by-concept/{concept_id}")
-def courses_by_concept(concept_id: str):
-    """Courses that COVERS a specific Concept, plus the concept node itself."""
+@router.get("/graph/query/quizzes-by-skill/{skill_id}")
+def quizzes_by_skill(skill_id: str):
+    """Quizzes that ASSESSES a specific Skill, plus the skill node itself."""
     return _pair_result(
-        f"MATCH (a:Course)-[r:COVERS]->(b:Concept {{id: $cid}}) {_PAIR_RETURN}",
-        cid=concept_id,
+        f"MATCH (a:Quiz)-[r:ASSESSES]->(b:Skill {{id: $sid}}) {_PAIR_RETURN}",
+        sid=skill_id,
     )
 
 
-@router.get("/graph/query/skills-by-course/{course_id}")
-def skills_by_course(course_id: str):
-    """Skills that a Course TEACHES, plus the course node itself."""
+@router.get("/graph/query/knowledge-by-area/{area_id}")
+def knowledge_by_area(area_id: str):
+    """Knowledge that a KnowledgeArea HAS, plus the area node itself."""
     return _pair_result(
-        f"MATCH (a:Course {{id_course: $cid}})-[r:TEACHES]->(b:Skill) {_PAIR_RETURN}",
-        cid=course_id,
+        f"MATCH (a:KnowledgeArea {{id: $aid}})-[r:HAS]->(b:Knowledge) {_PAIR_RETURN}",
+        aid=area_id,
     )
 
 
 @router.get("/graph/options/{label}")
 def get_node_options(label: str):
     """Return list of {id, name} for a given label, used by quick query dropdowns."""
-    allowed = {"Skill": "id", "Concept": "id", "Course": "id_course"}
+    allowed = {"Skill", "Knowledge", "KnowledgeArea"}
     if label not in allowed:
-        raise HTTPException(status_code=400, detail=f"Label must be one of: {list(allowed.keys())}")
-    pk = allowed[label]
-    name_field = "name" if label != "Course" else "id_course"
+        raise HTTPException(status_code=400, detail=f"Label must be one of: {sorted(allowed)}")
     driver = get_driver()
     with driver.session(database=NEO4J_DATABASE) as session:
         records = session.run(
-            f"MATCH (n:{label}) RETURN n.{pk} AS id, n.{name_field} AS name ORDER BY n.{name_field}",
+            f"MATCH (n:{label}) RETURN n.id AS id, n.name AS name ORDER BY n.name",
         ).data()
     return records
 

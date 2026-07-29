@@ -25,10 +25,25 @@ function makeInput(field, spec) {
   label.innerHTML = `${field} ${spec.required ? '<span class="req">*</span>' : ''} <small>(${spec.type})</small>`;
   wrap.appendChild(label);
   let input;
-  if (spec.enum) {
+
+  if (spec.type === 'enum_list') {
+    // chọn nhiều từ enum (vd quiz_tag) → <select multiple>
+    input = document.createElement('select');
+    input.multiple = true;
+    input.size = Math.min(spec.enum.length, 6);
+    spec.enum.forEach(v => input.appendChild(new Option(v, v)));
+  } else if (spec.enum) {
     input = document.createElement('select');
     if (!spec.required) input.appendChild(new Option('-- none --', ''));
     spec.enum.forEach(v => input.appendChild(new Option(v, v)));
+  } else if (spec.type === 'json') {
+    input = document.createElement('textarea');
+    input.rows = 4;
+    input.placeholder = 'JSON, vd: [{"id":"...","title":"...","url":"..."}]';
+  } else if (spec.type === 'string_list') {
+    input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'cách nhau bởi dấu phẩy, vd: React, ReactJS';
   } else {
     input = document.createElement('input');
     input.type = (spec.type === 'float' || spec.type === 'int') ? 'number' : 'text';
@@ -37,11 +52,12 @@ function makeInput(field, spec) {
     if ('min' in spec) input.min = spec.min;
     if ('max' in spec) input.max = spec.max;
   }
+
   input.dataset.field = field;
   input.dataset.type = spec.type;
-  // Add placeholder hints for id fields
+  // Gợi ý format id: slug có tiền tố theo loại node
   if (spec.primary_key) {
-    input.placeholder = 'VD: USER-001, SKILL-003, COURSE-001';
+    input.placeholder = 'slug có tiền tố, vd: skill_react, knowledge_javascript';
   }
   wrap.appendChild(input);
   return wrap;
@@ -49,13 +65,27 @@ function makeInput(field, spec) {
 
 function collectProps(container) {
   const out = {};
-  container.querySelectorAll('input,select').forEach(el => {
-    const v = el.value.trim();
-    if (v === '') return;
+  container.querySelectorAll('input,select,textarea').forEach(el => {
     const f = el.dataset.field;
     if (!f) return;
-    out[f] = el.dataset.type === 'float' ? parseFloat(v)
-           : el.dataset.type === 'int' ? parseInt(v, 10) : v;
+    const t = el.dataset.type;
+
+    if (t === 'enum_list' || el.multiple) {
+      const vals = Array.from(el.selectedOptions).map(o => o.value).filter(v => v !== '');
+      if (vals.length) out[f] = vals;
+      return;
+    }
+    if (t === 'string_list') {
+      const vals = el.value.split(',').map(s => s.trim()).filter(s => s !== '');
+      if (vals.length) out[f] = vals;
+      return;
+    }
+
+    const v = el.value.trim();
+    if (v === '') return;
+    if (t === 'json') { out[f] = v; return; }   // giữ nguyên chuỗi JSON
+    out[f] = t === 'float' ? parseFloat(v)
+           : t === 'int' ? parseInt(v, 10) : v;
   });
   return out;
 }

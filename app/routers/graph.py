@@ -6,26 +6,33 @@ vis-network ve. AuditLog luon bi loai — no la metadata, khong phai du lieu do 
 """
 from fastapi import APIRouter, HTTPException
 
-from app.config import get_driver, NEO4J_DATABASE
+from app.config import get_driver, NEO4J_DATABASE, NODE_LABELS
 
 router = APIRouter(prefix="/api", tags=["graph"])
+
+# Chỉ hiển thị node NGHIỆP VỤ. Các node hệ thống (AuditLog, ChangeRequest,
+# AppUser — tài khoản đăng nhập) bị loại: không phải dữ liệu đồ thị và không được
+# lộ (AppUser có mật khẩu băm).
+_BUSINESS_LABELS = list(NODE_LABELS)
 
 
 @router.get("/graph")
 def get_graph_data(limit: int = 200):
-    """Return all non-AuditLog nodes and rels for the visualizer to render."""
+    """Chỉ trả node/rel nghiệp vụ cho visualizer (ẩn node hệ thống)."""
     driver = get_driver()
     with driver.session(database=NEO4J_DATABASE) as session:
         node_records = session.run(
-            "MATCH (n) WHERE NOT n:AuditLog RETURN elementId(n) AS internal_id, "
+            "MATCH (n) WHERE any(l IN labels(n) WHERE l IN $labels) "
+            "RETURN elementId(n) AS internal_id, "
             "labels(n) AS labels, properties(n) AS props LIMIT $limit",
-            limit=limit,
+            labels=_BUSINESS_LABELS, limit=limit,
         ).data()
         rel_records = session.run(
-            "MATCH (s)-[r]->(e) WHERE NOT s:AuditLog AND NOT e:AuditLog "
+            "MATCH (s)-[r]->(e) WHERE any(l IN labels(s) WHERE l IN $labels) "
+            "AND any(l IN labels(e) WHERE l IN $labels) "
             "RETURN elementId(r) AS internal_id, type(r) AS type, "
             "elementId(s) AS start, elementId(e) AS end, properties(r) AS props LIMIT $limit",
-            limit=limit * 2,
+            labels=_BUSINESS_LABELS, limit=limit * 2,
         ).data()
 
     return {
@@ -128,10 +135,14 @@ def get_node_options(label: str):
 
 @router.delete("/graph/wipe")
 def wipe_graph(confirm: str = ""):
-    """Demo-only: clear all graph data (NOT AuditLog). Requires confirm=YES."""
+    """Demo-only: xoá dữ liệu NGHIỆP VỤ. Giữ nguyên node hệ thống (AuditLog,
+    ChangeRequest, AppUser — tài khoản đăng nhập). Requires confirm=YES."""
     if confirm != "YES":
         raise HTTPException(status_code=400, detail="Pass ?confirm=YES to confirm")
     driver = get_driver()
     with driver.session(database=NEO4J_DATABASE) as session:
-        session.run("MATCH (n) WHERE NOT n:AuditLog DETACH DELETE n")
+        session.run(
+            "MATCH (n) WHERE any(l IN labels(n) WHERE l IN $labels) DETACH DELETE n",
+            labels=_BUSINESS_LABELS,
+        )
     return {"success": True}

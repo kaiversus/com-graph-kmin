@@ -13,17 +13,38 @@
     <h1>COM Platform — Graph DB Admin</h1>
     <p class="subtitle">Knowledge Graph data import · validation · snapshot · rollback</p>
     <div id="health-badge" class="health-badge">checking…</div>
+    <div class="identity-bar" id="identity-bar" style="display:none">
+      <span id="identity-current" class="identity-current"></span>
+      <button id="btn-change-pw" type="button" class="idbtn">Đổi mật khẩu</button>
+      <button id="btn-logout" type="button" class="idbtn">Đăng xuất</button>
+    </div>
   </header>
 
+  <!-- ========== LOGIN OVERLAY (hiện mặc định, ẩn sau khi xác thực) ========== -->
+  <div id="login-overlay" class="login-overlay">
+    <form id="login-form" class="login-card">
+      <h2>Đăng nhập</h2>
+      <p class="login-sub">Graph DB Admin — nhập email &amp; mật khẩu.</p>
+      <label>Email</label>
+      <input id="login-email" type="email" autocomplete="username" placeholder="email@…" required />
+      <label>Mật khẩu</label>
+      <input id="login-password" type="password" autocomplete="current-password" placeholder="mật khẩu" required />
+      <button type="submit" id="login-submit">Đăng nhập</button>
+      <div id="login-error" class="login-error"></div>
+    </form>
+  </div>
+
   <nav class="tabs">
-    <button data-tab="opt1" class="tab active">Option 1 · Single entity</button>
-    <button data-tab="opt2" class="tab">Option 2 · CSV bulk</button>
+    <button data-tab="opt1" class="tab active" data-admin-only>Option 1 · Single entity</button>
+    <button data-tab="opt2" class="tab" data-admin-only>Option 2 · CSV bulk</button>
     <button data-tab="build" class="tab">Guided Build</button>
     <button data-tab="manage" class="tab">Manage · Edit/Delete</button>
-    <button data-tab="audit" class="tab">Audit · Restore</button>
+    <button data-tab="myreq" class="tab">Đề xuất của tôi</button>
+    <button data-tab="review" class="tab" data-admin-only>Review · Duyệt <span id="review-badge" class="review-badge" style="display:none">0</span></button>
+    <button data-tab="audit" class="tab" data-admin-only>Audit · Restore</button>
     <button data-tab="viz" class="tab">Visualizer</button>
     <button data-tab="roadmap" class="tab">Roadmap</button>
-    <button data-tab="export" class="tab">Export Data</button>
+    <button data-tab="export" class="tab" data-admin-only>Export Data</button>
   </nav>
 
   <!-- ========== OPTION 1 ========== -->
@@ -176,6 +197,10 @@
         <div id="rb-tree" class="rb-tree">
           <p class="hint">Chưa có gì trong draft.</p>
         </div>
+        <div class="expert-note" style="display:none">
+          <label>Ghi chú cho admin (khi gửi duyệt)</label>
+          <textarea id="rb-note" rows="2" placeholder="Vì sao đề xuất thay đổi này…"></textarea>
+        </div>
         <div class="actions">
           <button id="rb-commit" type="button" disabled>Commit cả cây</button>
           <button id="rb-clear" type="button" class="danger">Xoá draft</button>
@@ -212,7 +237,60 @@
       </div>
     </div>
 
+    <div class="expert-note" style="display:none">
+      <label>Ghi chú cho admin (đính kèm mọi đề xuất Sửa/Xoá bên dưới)</label>
+      <textarea id="mng-note" rows="2" placeholder="Vì sao đề xuất thay đổi này…"></textarea>
+    </div>
     <div id="mng-result" class="result-box"></div>
+  </section>
+
+  <!-- ========== ĐỀ XUẤT CỦA TÔI ========== -->
+  <section id="myreq" class="panel">
+    <h2>Đề xuất của tôi</h2>
+    <p class="hint">Các lô đề xuất bạn đã gửi và <strong>phản hồi của admin</strong> (duyệt / từ chối + lý do). Bấm ↻ để cập nhật.</p>
+    <div class="row"><button id="myreq-refresh" type="button">↻ Tải lại</button></div>
+    <div id="myreq-list" class="myreq-list"><div class="hint">Đang tải…</div></div>
+  </section>
+
+  <!-- ========== REVIEW ========== -->
+  <section id="review" class="panel">
+    <h2>Review — duyệt đề xuất của chuyên gia</h2>
+    <p class="hint">Chuyên gia gửi đề xuất Thêm/Sửa/Xoá; admin xem rồi <strong>Duyệt</strong> (mới ghi vào graph, có audit &amp; Restore) hoặc <strong>Từ chối</strong>.</p>
+
+    <div class="review-layout">
+      <!-- Cột trái: hàng chờ -->
+      <div class="review-queue-col">
+        <div class="row review-filter">
+          <label>Lọc:</label>
+          <select id="rv-filter">
+            <option value="pending">Đang chờ</option>
+            <option value="approved">Đã duyệt</option>
+            <option value="rejected">Đã từ chối</option>
+            <option value="">Tất cả</option>
+          </select>
+          <button id="rv-refresh" type="button">↻ Tải lại</button>
+        </div>
+        <div id="rv-list" class="rv-list"><div class="hint">Đang tải…</div></div>
+      </div>
+
+      <!-- Cột phải: chi tiết + quản lý chuyên gia -->
+      <div class="review-side">
+        <div id="rv-detail" class="rv-detail">
+          <div class="hint">← Chọn một đề xuất để xem chi tiết.</div>
+        </div>
+
+        <div class="rv-experts-card">
+          <h3>Tài khoản chuyên gia</h3>
+          <div class="rv-expert-add">
+            <input id="rv-usr-email" type="email" placeholder="email@…" />
+            <input id="rv-usr-name" placeholder="Tên hiển thị" />
+            <input id="rv-usr-pw" type="text" placeholder="Mật khẩu (đưa cho chuyên gia)" />
+            <button id="rv-usr-add" type="button">+ Tạo tài khoản</button>
+          </div>
+          <div id="rv-users" class="rv-experts"><div class="hint">Đang tải…</div></div>
+        </div>
+      </div>
+    </div>
   </section>
 
   <!-- ========== AUDIT ========== -->
@@ -297,15 +375,26 @@
   <section id="roadmap" class="panel">
     <div class="roadmap-header">
       <h2>Learning Roadmap</h2>
-      <p class="roadmap-subtitle">Chọn vai trò (JobRole) hoặc lĩnh vực (KnowledgeArea) để xem lộ trình. Sơ đồ hiển thị từ trên xuống dưới theo thứ tự nên học.</p>
+      <p class="roadmap-subtitle">Chọn vai trò (JobRole) hoặc lĩnh vực (KnowledgeArea), và (tùy chọn) một học viên để xem <strong>bạn đang ở đâu, cần học gì tiếp, cái gì quan trọng</strong>. Sơ đồ đọc từ trên xuống theo thứ tự nên học.</p>
     </div>
 
     <div class="roadmap-controls">
+      <!-- Chọn học viên để cá nhân hóa -->
+      <div class="roadmap-learner-bar">
+        <div class="rsc-icon">🧑‍🎓</div>
+        <div class="rsc-body">
+          <label>Học viên (để xem tiến độ cá nhân — bỏ trống = bản chung)</label>
+          <select id="rm-account-sel">
+            <option value="">-- Không chọn (bản chung) --</option>
+          </select>
+        </div>
+      </div>
+
       <div class="roadmap-source-group">
         <div class="roadmap-source-card" id="rm-source-role">
           <div class="rsc-icon">🧭</div>
           <div class="rsc-body">
-            <label>Chọn vai trò</label>
+            <label>Theo vai trò nghề nghiệp</label>
             <select id="rm-role-sel">
               <option value="">-- Chọn JobRole --</option>
             </select>
@@ -315,7 +404,7 @@
         <div class="roadmap-source-card" id="rm-source-area">
           <div class="rsc-icon">📂</div>
           <div class="rsc-body">
-            <label>Chọn lĩnh vực</label>
+            <label>Theo lĩnh vực kiến thức</label>
             <select id="rm-area-sel">
               <option value="">-- Chọn KnowledgeArea --</option>
             </select>
@@ -326,19 +415,30 @@
     </div>
 
     <div id="rm-legend" class="roadmap-legend" style="display:none">
+      <span id="rm-legend-status" style="display:none;align-items:center;gap:16px">
+        <span class="rm-legend-title">Trạng thái:</span>
+        <span class="rm-legend-item"><span class="rm-dot rm-dot-done"></span> Đã đạt</span>
+        <span class="rm-legend-item"><span class="rm-dot rm-dot-progress"></span> Đang học</span>
+        <span class="rm-legend-item"><span class="rm-dot rm-dot-todo"></span> Chưa học</span>
+        <span class="rm-legend-sep"></span>
+      </span>
+      <span class="rm-legend-title">Loại:</span>
       <span class="rm-legend-item"><span class="rm-dot rm-dot-root"></span> Vai trò / Lĩnh vực</span>
-      <span class="rm-legend-item"><span class="rm-dot rm-dot-level"></span> Cấp độ</span>
       <span class="rm-legend-item"><span class="rm-dot rm-dot-skill"></span> Kỹ năng</span>
       <span class="rm-legend-item"><span class="rm-dot rm-dot-concept"></span> Knowledge</span>
-      <span class="rm-legend-item"><span class="rm-dot rm-dot-prereq"></span> Điều kiện tiên quyết</span>
+      <span class="rm-legend-hint">· nét đứt = tiên quyết / phụ thuộc · bấm node để xem chi tiết</span>
     </div>
 
-    <div id="rm-canvas" class="roadmap-canvas">
-      <div class="roadmap-empty-state">
-        <div class="res-icon">🗺️</div>
-        <h3>Chưa có Roadmap</h3>
-        <p>Chọn một khóa học hoặc chủ đề ở trên, rồi bấm <strong>Tạo Roadmap</strong> để xem lộ trình học tập.</p>
+    <!-- Dashboard 2 khung: cây (trái) + panel chi tiết (phải) -->
+    <div id="rm-dashboard" class="roadmap-dashboard">
+      <div id="rm-canvas" class="roadmap-canvas">
+        <div class="roadmap-empty-state">
+          <div class="res-icon">🗺️</div>
+          <h3>Chưa có Roadmap</h3>
+          <p>Chọn vai trò hoặc lĩnh vực ở trên (và một học viên nếu muốn), rồi bấm <strong>Tạo Roadmap</strong>.</p>
+        </div>
       </div>
+      <aside id="rm-panel" class="roadmap-panel" style="display:none"></aside>
     </div>
   </section>
 
@@ -412,6 +512,19 @@
       </div>
     </div>
   </section>
+
+  <!-- ========== GIỎ LÔ ĐỀ XUẤT (chuyên gia) ========== -->
+  <div id="batch-panel" class="batch-panel" style="display:none">
+    <div id="batch-head" class="batch-head">🧺 Lô đề xuất (<span id="batch-count">0</span>) <span class="batch-caret">▾</span></div>
+    <div class="batch-body">
+      <div id="batch-list" class="batch-list"></div>
+      <textarea id="batch-note" rows="2" placeholder="Mô tả lô thay đổi cho admin (nên có)…"></textarea>
+      <div class="batch-actions">
+        <button id="batch-submit" type="button" disabled>📤 Gửi lô duyệt</button>
+        <button id="batch-clear" type="button" class="danger">Xoá lô</button>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="/static/js/main.js"></script>
 </body>

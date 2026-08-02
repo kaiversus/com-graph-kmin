@@ -11,6 +11,55 @@ export function setSchema(schema) {
   SCHEMA = schema;
 }
 
+// ---- Identity từ PHIÊN ĐĂNG NHẬP (cookie). Nguồn chân lý là /api/auth/me ----
+// role: 'admin' (ghi trực tiếp) | 'expert' (gửi duyệt) | null (chưa đăng nhập).
+export const IDENTITY = { role: null, email: null, name: null };
+
+export async function fetchIdentity() {
+  try {
+    const u = await (await fetch('/api/auth/me')).json();
+    if (u && u.role) {
+      IDENTITY.role = u.role; IDENTITY.email = u.email; IDENTITY.name = u.name;
+      return true;
+    }
+  } catch { /* ignore */ }
+  IDENTITY.role = null; IDENTITY.email = null; IDENTITY.name = null;
+  return false;
+}
+
+export function isExpert() { return IDENTITY.role === 'expert'; }
+export function isAdmin() { return IDENTITY.role === 'admin'; }
+export function isLoggedIn() { return !!IDENTITY.role; }
+
+// ---- Giỏ "lô đề xuất" của chuyên gia: gom nhiều thay đổi rồi gửi 1 lần ----
+export const EXPERT_BATCH = [];   // [{ kind, data, summary }]
+let _onBatch = null;
+export function onBatchChange(fn) { _onBatch = fn; }
+export function addToBatch(op) { EXPERT_BATCH.push(op); if (_onBatch) _onBatch(); }
+export function removeFromBatch(i) { EXPERT_BATCH.splice(i, 1); if (_onBatch) _onBatch(); }
+export function clearBatch() { EXPERT_BATCH.length = 0; if (_onBatch) _onBatch(); }
+
+// Gửi một đề xuất thay đổi. Danh tính lấy từ cookie ở server — không gửi kèm.
+export async function submitChangeRequest(kind, data, note = '') {
+  const res = await fetch('/api/change-request', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind, data, note }),
+  });
+  return { ok: res.ok, data: await res.json() };
+}
+
+// Gom lỗi từ change-request/commit thành text hiển thị.
+export function fmtErrors(detail) {
+  if (!detail) return 'Lỗi không rõ';
+  if (typeof detail === 'string') return detail;
+  if (detail.errors && detail.errors.length) {
+    return (detail.message ? detail.message + '\n' : '') +
+      detail.errors.map(e => `• [row ${e.row ?? '?'}] ${e.field}: ${e.message}`).join('\n');
+  }
+  return detail.message || detail.error || JSON.stringify(detail);
+}
+
 // ---- Helpers ----
 function showResult(elId, content, kind = '') {
   const el = document.getElementById(elId);

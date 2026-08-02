@@ -11,7 +11,7 @@ from app.config import (
     get_driver,
     primary_key_of,
 )
-from app.services.importer import run_import
+from app.services.guided import apply_guided_build, BuildValidationError
 from app.services.recommender import (
     allocate_ids,
     allocate_tree_ids,
@@ -243,69 +243,16 @@ def get_neighborhood(label: str, node_id: str, limit: int = 40):
 @router.post("/commit")
 def commit_tree(req: CommitRequest):
     """
-    Commit ca cay 1 lan:
-      1. Cap id that cho node moi (LABEL-NNN), build id_map
-      2. Resolve temp id trong relationships
-      3. Validate lai toan bo (khong tin client)
-      4. run_import — 1 transaction, 1 AuditLog
+    Commit ca cay 1 lan (admin, ghi truc tiep). Cap id that -> resolve tham chieu
+    -> validate -> run_import (1 transaction, moi rang buoc). Logic dung chung o
+    services.guided.apply_guided_build (de duyet ChangeRequest cung dung lai).
     """
-    if not req.nodes and not req.relationships:
-        raise HTTPException(status_code=400, detail="Draft rong, khong co gi de commit")
-
-    # temp_id phai unique trong cay
-    temp_ids = [n.temp_id for n in req.nodes]
-    if len(temp_ids) != len(set(temp_ids)):
-        raise HTTPException(status_code=400, detail="temp_id bi trung trong draft")
-
-    # 1. Cap id that
+    nodes = [n.model_dump() for n in req.nodes]
+    rels = [r.model_dump() for r in req.relationships]
     try:
-        id_map = allocate_tree_ids([n.model_dump() for n in req.nodes])
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Khong cap duoc id: {e}")
-
-    # 2 + 3. Validate node (sau khi da gan id)
-    errors: list[dict] = []
-    nodes_to_write: list[dict] = []
-    for i, n in enumerate(req.nodes):
-        if n.label not in NODE_LABELS:
-            errors.append({"row": i, "field": "_label", "message": f"Unknown label '{n.label}'"})
-            continue
-        pk = primary_key_of(n.label)
-        # Admin tu go id (shadow node) thi ton trong; con lai server cap
-        props = {**n.props} if n.props.get(pk) else {**n.props, pk: id_map[n.temp_id]}
-        clean, errs = validate_node_record(n.label, props, row_index=i)
-        errors.extend(errs)
-        if clean:
-            nodes_to_write.append({"label": n.label, "props": clean})
-
-    # Validate relationships sau khi resolve tham chieu
-    rels_to_write: list[dict] = []
-    for i, r in enumerate(req.relationships):
-        record = {
-            "start_label": r.start_label,
-            "start_id": resolve_ref(r.start, id_map),
-            "end_label": r.end_label,
-            "end_id": resolve_ref(r.end, id_map),
-            **r.props,
-        }
-        clean, errs = validate_relationship_record(r.rel_type, record, row_index=i)
-        errors.extend(errs)
-        if clean:
-            rels_to_write.append({"rel_type": r.rel_type, **clean})
-
-    if errors:
-        raise HTTPException(status_code=400, detail={"errors": errors, "id_map": id_map})
-
-    # 4. Ghi — importer merge toan bo node truoc roi moi toi rel nen cay sau
-    # bao nhieu tang cung an toan trong 1 transaction, khong can topological sort.
-    try:
-        result = run_import(
-            actor=req.actor,
-            option="recommend_guided_build",
-            nodes=nodes_to_write,
-            relationships=rels_to_write,
-        )
+        result = apply_guided_build(req.actor, nodes, rels)
+    except BuildValidationError as e:
+        raise HTTPException(status_code=400, detail={"errors": e.errors, "id_map": e.id_map})
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": str(e), "phase": "transaction"})
-
-    return {"success": True, "id_map": id_map, **result}
+    return {"success": True, **result}

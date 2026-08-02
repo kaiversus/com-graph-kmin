@@ -33,6 +33,14 @@ NEO4J_USER = os.getenv("NEO4J_USER") or os.getenv("NEO4J_USERNAME") or "neo4j"
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "complatform2026")
 NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
 
+# ---- Auth / login (AppUser) ----
+# Admin gốc được seed lúc startup nếu chưa có. Đổi mật khẩu ngay sau lần đầu.
+ADMIN_EMAIL = (os.getenv("ADMIN_EMAIL", "thienbao612006@gmail.com")).strip().lower()
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+# Bí mật ký cookie phiên — ĐẶT APP_SECRET trong .env cho production.
+APP_SECRET = os.getenv("APP_SECRET", "dev-insecure-secret-change-me")
+SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "12"))
+
 # Allowed node labels and relationship types (white-list to prevent Cypher injection
 # via label/type parameter — Cypher does not parameterize these)
 NODE_LABELS = {

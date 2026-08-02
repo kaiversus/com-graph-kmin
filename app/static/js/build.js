@@ -1,5 +1,6 @@
 // ===== Guided Build — checklist theo schema, commit ca cay 1 lan =====
-import { SCHEMA, setSchema, showResult, makeInput, collectProps, attachGraphZoom } from './core.js';
+import { SCHEMA, setSchema, showResult, makeInput, collectProps, attachGraphZoom,
+         isExpert, addToBatch, fmtErrors } from './core.js';
 
 const RB = {
   items: {},    // ref -> { ref, label, name, isNew, props, parentRef, viaRel }
@@ -882,28 +883,43 @@ document.getElementById('rb-clear').addEventListener('click', () => {
 
 document.getElementById('rb-commit').addEventListener('click', async () => {
   const btn = document.getElementById('rb-commit');
-  const payload = {
-    actor: 'admin',
+  const draft = {
     nodes: RB.order.filter(r => RB.items[r].isNew).map(r => ({
       temp_id: r, label: RB.items[r].label, props: RB.items[r].props,
     })),
     relationships: RB.rels,
   };
   btn.disabled = true;
+
+  // Chuyên gia → THÊM VÀO LÔ (gửi cả lô + mô tả sau). Admin → commit trực tiếp.
+  if (isExpert()) {
+    const nCount = draft.nodes.length, rCount = draft.relationships.length;
+    if (!nCount && !rCount) { showResult('rb-result', 'Draft trống.', 'warn'); btn.disabled = false; return; }
+    addToBatch({ kind: 'build', data: draft, summary: `Thêm ${nCount} node, ${rCount} quan hệ` });
+    showResult('rb-result',
+      `✓ Đã thêm vào lô đề xuất (${nCount} node, ${rCount} quan hệ).\n` +
+      `Mở giỏ "Lô đề xuất" (góc dưới phải) để thêm nữa hoặc gửi duyệt.`, 'ok');
+    RB.items = {}; RB.order = []; RB.rels = []; RB.focus = null; RB.counter = 0;
+    RB.suggestions = []; RB.neighbors = [];
+    if (RB.network) { RB.network.destroy(); RB.network = null; }
+    RB.gNodes = null; RB.gEdges = null; RB.graphFocus = null;
+    if (RB.dNetwork) { RB.dNetwork.destroy(); RB.dNetwork = null; }
+    document.getElementById('rb-checklist-card').style.display = 'none';
+    rbCloseForm();
+    rbRenderTree();
+    return;
+  }
+
   showResult('rb-result', 'Đang commit…');
   try {
     const res = await fetch('/api/recommend/commit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ actor: 'admin', ...draft }),
     });
     const d = await res.json();
     if (!res.ok) {
-      const det = d.detail || d;
-      const msg = det.errors
-        ? det.errors.map(e => `• [row ${e.row}] ${e.field}: ${e.message}`).join('\n')
-        : (det.error || JSON.stringify(det));
-      showResult('rb-result', `Commit thất bại — draft giữ nguyên:\n${msg}`, 'err');
+      showResult('rb-result', `Commit thất bại — draft giữ nguyên:\n${fmtErrors(d.detail || d)}`, 'err');
       btn.disabled = false;
       return;
     }

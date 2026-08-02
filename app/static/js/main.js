@@ -11,6 +11,8 @@ import { loadRoadmapSources } from './roadmap.js';
 import { loadExportStats } from './export.js';
 import { rbInit } from './build.js';
 import { populateManageLabels } from './manage.js';
+import { initAuth, applyRole, onReviewTab, loadMyRequests } from './review.js';
+import { initBatch } from './batch.js';
 
 // ---- Tabs ----
 document.querySelectorAll('.tab').forEach(btn => {
@@ -23,13 +25,25 @@ document.querySelectorAll('.tab').forEach(btn => {
     if (btn.dataset.tab === 'viz') renderViz();
     if (btn.dataset.tab === 'roadmap') loadRoadmapSources();
     if (btn.dataset.tab === 'build') rbInit();
+    if (btn.dataset.tab === 'review') onReviewTab();
+    if (btn.dataset.tab === 'myreq') loadMyRequests();
     if (btn.dataset.tab === 'export') loadExportStats();
   });
 });
 
-// ---- Bootstrap: load schema + health check ----
+// Nạp dữ liệu app — chỉ chạy SAU khi đã đăng nhập (các API này cần phiên).
+async function loadAppData() {
+  const r = await fetch('/api/schema');
+  setSchema(await r.json());
+  populateOpt1Labels();
+  populateOpt2Targets();
+  populateManageLabels();
+  loadQuickQueryOptions();
+  applyRole();
+}
+
+// ---- Bootstrap: health check (mở) → auth gate → nạp app ----
 async function bootstrap() {
-  // Health check
   try {
     const h = await (await fetch('/api/health')).json();
     const badge = document.getElementById('health-badge');
@@ -46,12 +60,10 @@ async function bootstrap() {
     document.getElementById('health-badge').textContent = '? health check error';
   }
 
-  const r = await fetch('/api/schema');
-  setSchema(await r.json());
-  populateOpt1Labels();
-  populateOpt2Targets();
-  populateManageLabels();
-  loadQuickQueryOptions();
+  initBatch();
+  document.getElementById('myreq-refresh').addEventListener('click', loadMyRequests);
+  // initAuth: nếu đã đăng nhập → loadAppData(); nếu chưa → hiện màn đăng nhập.
+  await initAuth(loadAppData);
 }
 
 bootstrap();

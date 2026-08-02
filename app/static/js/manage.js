@@ -3,7 +3,15 @@
 // Layout 2 cột: trái = tìm kiếm + graph (chỉ để nhìn), phải = property + quan hệ.
 // Tìm qua /api/recommend/existing, đọc/sửa/xoá qua /api/crud/*.
 // Mọi thao tác đi qua importer (snapshot + AuditLog) → Restore được ở tab Audit.
-import { SCHEMA, showResult, makeInput, collectProps } from './core.js';
+import { SCHEMA, showResult, makeInput, collectProps, isExpert, addToBatch } from './core.js';
+
+// Chuyên gia: thêm 1 thao tác CRUD vào LÔ đề xuất. Trả true nếu đã xử lý (là chuyên gia).
+function mngProposeIfExpert(kind, data, okMsg) {
+  if (!isExpert()) return false;
+  addToBatch({ kind, data, summary: okMsg });
+  showResult('mng-result', `✓ Đã thêm vào lô: "${okMsg}".\nMở giỏ "Lô đề xuất" (góc dưới phải) để gửi duyệt.`, 'ok');
+  return true;
+}
 
 let MNG = { label: null, node: null, selectedId: null, network: null };
 
@@ -164,6 +172,8 @@ function mngRenderRight(data) {
 
 async function mngSaveNode(grid) {
   const props = collectProps(grid);
+  if (await mngProposeIfExpert('update_node',
+      { label: MNG.label, node_id: MNG.node.id, properties: props }, `Sửa ${MNG.label}:${MNG.node.id}`)) return;
   try {
     const r = await fetch(`/api/crud/node/${encodeURIComponent(MNG.label)}/${encodeURIComponent(MNG.node.id)}`, {
       method: 'PUT',
@@ -178,6 +188,11 @@ async function mngSaveNode(grid) {
 
 async function mngDeleteNode() {
   const id = MNG.node.id;
+  if (isExpert()) {
+    if (!confirm(`Gửi đề xuất XOÁ ${MNG.label}:${id} để admin duyệt?`)) return;
+    await mngProposeIfExpert('delete_node', { label: MNG.label, node_id: id }, `Xoá ${MNG.label}:${id}`);
+    return;
+  }
   if (!confirm(`Xoá ${MNG.label}:${id} và mọi quan hệ của nó?\n(Restore được ở tab Audit)`)) return;
   try {
     const r = await fetch(`/api/crud/node/${encodeURIComponent(MNG.label)}/${encodeURIComponent(id)}?actor=admin`,
@@ -245,6 +260,10 @@ function relBody(r, extra = {}) {
 
 async function mngSaveRel(r, grid) {
   const props = collectProps(grid);
+  if (await mngProposeIfExpert('update_rel',
+      { rel_type: r.rel_type, start_label: r.start_label, start_id: r.start_id,
+        end_label: r.end_label, end_id: r.end_id, properties: props },
+      `Sửa ${r.rel_type} ${r.start_id}→${r.end_id}`)) return;
   try {
     const res = await fetch('/api/crud/relationship', {
       method: 'PUT',
@@ -258,6 +277,14 @@ async function mngSaveRel(r, grid) {
 }
 
 async function mngDeleteRel(r) {
+  if (isExpert()) {
+    if (!confirm(`Gửi đề xuất XOÁ quan hệ ${r.rel_type} ${r.start_id}→${r.end_id} để admin duyệt?`)) return;
+    await mngProposeIfExpert('delete_rel',
+      { rel_type: r.rel_type, start_label: r.start_label, start_id: r.start_id,
+        end_label: r.end_label, end_id: r.end_id },
+      `Xoá ${r.rel_type} ${r.start_id}→${r.end_id}`);
+    return;
+  }
   if (!confirm(`Xoá quan hệ ${r.rel_type} ${r.start_label}:${r.start_id} → ${r.end_label}:${r.end_id}?`)) return;
   try {
     const res = await fetch('/api/crud/relationship', {

@@ -271,14 +271,17 @@ function renderHero() {
     ? `<div class="rm-hero-who">👤 Học viên: ${escapeHtml(d.account.name)}</div>`
     : '';
 
-  const ring = pers ? ringHtml(s.percent) : '';
+  // Vong tron do THANH THAO, khong do so muc da xong. Vi "hoan thanh" = 100% nen
+  // s.percent dung 0 rat lau — de no lam so chinh thi nhin nhu chua lam gi ca, du
+  // nguoi hoc da di duoc nua duong. So "hoan thanh" van hien nguyen o hang thong ke
+  // ngay ben canh, khong giau di.
+  const ring = pers ? ringHtml(s.mastery ?? s.percent) : '';
 
   const stats = pers
     ? `<div class="rm-hero-stats">
-         <span class="rm-stat"><i class="done"></i><b>${s.done}</b> đã đạt</span>
-         <span class="rm-stat"><i class="prog"></i><b>${s.in_progress}</b> đang học</span>
+         <span class="rm-stat"><i class="done"></i><b>${s.done}</b>/${s.total} hoàn thành 100%</span>
+         <span class="rm-stat"><i class="prog"></i><b>${s.on_track ?? s.in_progress}</b> mục đã vững</span>
          <span class="rm-stat"><i class="todo"></i><b>${s.not_started}</b> chưa học</span>
-         <span class="rm-stat">Tổng <b>${s.total}</b> mục</span>
        </div>`
     : `<div class="rm-hero-stats"><span class="rm-stat">Lộ trình gồm <b>${s.total}</b> mục</span></div>`;
 
@@ -334,7 +337,7 @@ function ringHtml(percent) {
   const r = 44, c = 2 * Math.PI * r;
   const offset = c * (1 - Math.max(0, Math.min(100, percent)) / 100);
   return `
-    <div class="rm-ring" role="img" aria-label="Hoàn thành ${percent} phần trăm">
+    <div class="rm-ring" role="img" aria-label="Mức thành thạo ${percent} phần trăm">
       <svg width="104" height="104" viewBox="0 0 104 104">
         <defs>
           <linearGradient id="rmRingGrad" x1="0" y1="0" x2="1" y2="1">
@@ -345,7 +348,7 @@ function ringHtml(percent) {
         <circle class="rm-ring-fill" cx="52" cy="52" r="${r}" fill="none" stroke-width="9"
                 stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${offset.toFixed(1)}"/>
       </svg>
-      <div class="rm-ring-text"><span class="rm-ring-pct">${percent}%</span><span class="rm-ring-cap">HOÀN THÀNH</span></div>
+      <div class="rm-ring-text"><span class="rm-ring-pct">${percent}%</span><span class="rm-ring-cap">THÀNH THẠO</span></div>
     </div>`;
 }
 
@@ -565,15 +568,16 @@ function cardsHtml(ids) {
   return cards ? `<div class="rm-cards">${cards}</div>` : '';
 }
 
-// Mot NHANH = mot nang luc: kien thuc nen xep TRUOC, ky nang chot xep SAU.
-// Doc tu tren xuong chinh la thu tu hoc, khong con kieu "tang skill / tang knowledge".
+// Mot NHANH = mot nang luc. DAU NHANH CHINH LA THE KY NANG do — truoc day ten skill
+// hien 2 lan (dau nhanh + o the cuoi), trung lap va ton cho. Ben duoi chi con kien thuc
+// nen, gan nhan "Can hoc truoc" nen thu tu hoc van doc ra duoc.
 function branchHtml(b) {
-  const dep = (b.depends_on || []).length
-    ? `<span class="rm-branch-dep">cần xong trước: ${escapeHtml(b.depends_on.join(', '))}</span>` : '';
-
+  const target = RM.byId.get(b.target_id);
   const prereqs = (b.prereq_ids || []).map(id => RM.byId.get(id)).filter(Boolean);
   const shared = (b.shared_ids || []).map(id => RM.byId.get(id)).filter(Boolean);
-  const target = RM.byId.get(b.target_id);
+
+  const dep = (b.depends_on || []).length
+    ? `<div class="rm-branch-dep">⛓ Cần xong trước: <b>${escapeHtml(b.depends_on.join(', '))}</b></div>` : '';
 
   const steps = [];
   prereqs.forEach(n => steps.push(`<li class="rm-step-node">${cardHtml(n)}</li>`));
@@ -581,30 +585,65 @@ function branchHtml(b) {
   shared.forEach(n => steps.push(
     `<li class="rm-step-node is-ref"><button type="button" class="rm-refchip" data-node="${escapeHtml(n.id)}">
        ↑ ${escapeHtml(n.label)} <span>đã có ở bậc trước</span></button></li>`));
-  if (target) steps.push(`<li class="rm-step-node is-target">${cardHtml(target)}</li>`);
+
+  const needs = steps.length
+    ? `<div class="rm-branch-needs">
+         <span class="rm-branch-needs-cap">Cần học trước để đạt</span>
+         <ol class="rm-branch-steps">${steps.join('')}</ol>
+       </div>`
+    : '<div class="rm-branch-needs is-empty">Không cần kiến thức nền nào — bắt đầu được ngay.</div>';
 
   return `
     <div class="rm-branch">
-      <div class="rm-branch-head">
-        <span class="rm-branch-name">${escapeHtml(b.label)}</span>
-        ${dep}
-      </div>
-      <ol class="rm-branch-steps">${steps.join('')}</ol>
+      ${target ? cardHtml(target, { variant: 'target' }) : ''}
+      ${dep}
+      ${needs}
     </div>`;
 }
 
+// Dich den KHONG phai mot chang nua — tach han ra khoi track bang duong ke va khoi
+// rieng, de "xong het" la mot khoanh khac chu khong phai mot dong chu troi noi o cuoi.
 function finishHtml() {
-  const d = RM.data, s = d.summary;
-  if (d.personalized && s.total > 0 && s.done === s.total) {
-    return `<div class="rm-finish is-reached"><span class="rm-finish-idx">🏁</span>
-      Bạn đã hoàn thành toàn bộ lộ trình <strong>${escapeHtml(d.root.name)}</strong>.</div>`;
+  const d = RM.data, s = d.summary, pers = !!d.personalized;
+  const name = escapeHtml(d.root.name);
+
+  if (pers && s.total > 0 && s.done === s.total) {
+    return `
+      <div class="rm-goal is-reached">
+        <div class="rm-goal-medal">🏆</div>
+        <div class="rm-goal-body">
+          <div class="rm-goal-cap">HOÀN THÀNH LỘ TRÌNH</div>
+          <div class="rm-goal-name">${name}</div>
+          <div class="rm-goal-note">Toàn bộ ${s.total} mục đều đạt 100%. Quá đỉnh 🎉</div>
+        </div>
+      </div>`;
   }
-  const left = d.personalized ? s.total - s.done : s.total;
-  return `<div class="rm-finish"><span class="rm-finish-idx">🏁</span>
-    Đích đến: làm chủ <strong>${escapeHtml(d.root.name)}</strong> — còn ${left} mục nữa.</div>`;
+
+  const left = pers ? s.total - s.done : s.total;
+  // Thanh nay do MUC DO THANH THAO chu khong phai so muc da xong — no nhuc nhich sau
+  // moi buoi hoc, nen nhin vao con thay minh dang tien.
+  const meter = pers ? `
+    <div class="rm-goal-meter">
+      <div class="rm-goal-meter-bar"><i style="width:${s.mastery || 0}%"></i></div>
+      <div class="rm-goal-meter-cap">Đã đi được <b>${s.mastery || 0}%</b> quãng đường
+        · <b>${s.on_track || 0}</b>/${s.total} mục đã vững</div>
+    </div>` : '';
+
+  return `
+    <div class="rm-goal">
+      <div class="rm-goal-medal">🏁</div>
+      <div class="rm-goal-body">
+        <div class="rm-goal-cap">ĐÍCH ĐẾN</div>
+        <div class="rm-goal-name">${name}</div>
+        <div class="rm-goal-note">${pers
+          ? `Còn <b>${left}</b> mục nữa cần đạt 100%.`
+          : `Lộ trình gồm <b>${s.total}</b> mục.`}</div>
+        ${meter}
+      </div>
+    </div>`;
 }
 
-function cardHtml(n) {
+function cardHtml(n, opts = {}) {
   const pers = !!RM.data.personalized;
   const status = pers ? (n.status || 'not_started') : null;
   const locked = pers && n.ready === false && status !== 'done';
@@ -612,6 +651,7 @@ function cardHtml(n) {
   // Truoc day chi khac nhau o dong chu nho, nhin luot khong tach duoc hai loai.
   const isSkill = n.type === 'Skill';
   const cls = ['rm-card', isSkill ? 'is-skill' : 'is-know',
+    opts.variant === 'target' ? 'rm-card-target' : '',
     pers ? STATUS_CLASS[status] : 'is-todo', locked ? 'is-locked' : ''].filter(Boolean).join(' ');
   const icon = locked ? '🔒' : (pers ? (STATUS_ICON[status] || '') : '');
 
@@ -741,8 +781,8 @@ function applyFilters() {
 
   const marker = track.querySelector('.rm-here');
   if (marker) marker.hidden = active;
-  const finish = track.querySelector('.rm-finish');
-  if (finish) finish.hidden = active;
+  const goal = track.querySelector('.rm-goal');
+  if (goal) goal.hidden = active;
   const none = $('rm-nomatch');
   if (none) none.hidden = shown > 0;
 

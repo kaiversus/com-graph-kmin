@@ -687,6 +687,15 @@ def _summarize(items, root, unit_vi, personalized, unit_label):
     percent = round(done_w / total_w * 100) if total_w else 0
     percent_count = round(done / total * 100) if total else 0
 
+    # Từ khi "hoàn thành" = 100%, `percent` đứng 0 rất lâu — đúng nhưng nhìn như chưa
+    # làm gì cả. `mastery` đo công sức THẬT đã bỏ ra (trung bình proficiency có trọng số),
+    # nên vẫn nhúc nhích sau mỗi buổi học. Hai số này bổ sung nhau, không thay thế nhau:
+    # mastery để tạo động lực, percent để nói sự thật về việc đã xong hay chưa.
+    mastery_w = sum(w(it) * (it.get("prof") or 0) for it in items)
+    mastery = round(mastery_w / total_w * 100) if total_w else 0
+    # Số mục đã đủ vững để đi tiếp — cột mốc trung gian giữa "chưa học" và "100%".
+    on_track = sum(1 for it in items if _unlocked(it.get("prof")))
+
     # Milestone theo cấp độ (beginner→expert)
     ms_map: dict[str, dict] = {}
     for it in items:
@@ -766,6 +775,7 @@ def _summarize(items, root, unit_vi, personalized, unit_label):
     return {
         "total": total, "done": done, "in_progress": in_progress, "not_started": not_started,
         "percent": percent, "percent_count": percent_count,
+        "mastery": mastery, "on_track": on_track,
         "milestones": milestones, "next_steps": next_steps,
         "headline": headline, "sub": sub,
         "status_label": STATUS_LABEL, "importance_label": IMPORTANCE_LABEL,

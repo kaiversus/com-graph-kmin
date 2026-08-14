@@ -257,8 +257,12 @@ function renderAll(data) {
   requestAnimationFrame(drawLinks);
 }
 
+// Chi dem canh THUC SU duoc ve. Canh nam trong cau truc cay khong ve nua, dem ca
+// chung vao thi nut bat/tat noi lao ve so duong, va nguong 40 tu tat nham.
 function countPrereqEdges() {
-  return (RM.data.edges || []).filter(e => e.style === 'dashed').length;
+  const structural = structuralEdges();
+  return (RM.data.edges || [])
+    .filter(e => e.style === 'dashed' && !structural.has(`${e.from}>${e.to}`)).length;
 }
 
 /* ---- Hero ---- */
@@ -523,7 +527,10 @@ function renderTrack() {
     // Chang da xong thi thu gon san — bot nhieu, tap trung vao viec con lai.
     if (complete) RM.collapsed.add(g.key);
 
-    const cls = ['rm-stage', complete ? 'is-complete' : '', g.current ? 'is-current' : ''].filter(Boolean).join(' ');
+    // is-tree: chua nhanh -> chua mang le trai cho duong noi giua cac bac chay doc.
+    const isTree = !!(g.branches && g.branches.length);
+    const cls = ['rm-stage', isTree ? 'is-tree' : '',
+      complete ? 'is-complete' : '', g.current ? 'is-current' : ''].filter(Boolean).join(' ');
     // Chang nen tang gio CO thanh tien do nhu moi chang khac — no la viec phai hoc that,
     // truoc day de trong nen nhin nhu chu thich va bi bo qua.
     const bar = (pers && g.total)
@@ -794,6 +801,50 @@ function applyFilters() {
 
 /* ---- duong tien quyet (SVG) ---- */
 
+// Canh nao da duoc CAU TRUC cay dien dat roi thi khong ve mui ten nua.
+// Kien thuc nen nam ngay trong nhanh cua ky nang no phuc vu -> lui dau + nhan
+// "Can hoc truoc de dat" da noi du. Ve them mui ten vua thua, vua la nguon goc cua
+// mo chong cheo: trong bo cuc moi, ky nang dich nam PHIA TREN tien quyet cua no nen
+// duong phai vong nguoc len, cat qua moi the o giua.
+function structuralEdges() {
+  const keys = new Set();
+  (RM.data.groups || []).forEach(g => (g.branches || []).forEach(b => {
+    [...(b.prereq_ids || []), ...(b.shared_ids || [])]
+      .forEach(id => keys.add(`${id}>${b.target_id}`));
+  }));
+  return keys;
+}
+
+// Duong noi giua cac BAC: di theo mang le ben trai, bo goc tron, moi duong mot lan
+// rieng nen khong bao gio de len nhau. Thang - vuong - doan doan, de mat lan theo.
+function gutterPath(ar, br, base, lane) {
+  const x1 = ar.left - base.left, y1 = ar.top - base.top + ar.height / 2;
+  const x2 = br.left - base.left, y2 = br.top - base.top + br.height / 2;
+  const gx = Math.min(x1, x2) - 13 - lane * 9;
+  const dir = y2 >= y1 ? 1 : -1;
+  const r = Math.min(9, Math.abs(y2 - y1) / 2 || 9);
+  return `M${x1},${y1} H${gx + r} Q${gx},${y1} ${gx},${y1 + r * dir} `
+       + `V${y2 - r * dir} Q${gx},${y2} ${gx + r},${y2} H${x2}`;
+}
+
+// Bo cuc luoi phang (by-area): giu duong cong cu, o do muc phu thuoc that su nam duoi.
+function bezierPath(ar, br, base) {
+  const ax = ar.left - base.left, ay = ar.top - base.top;
+  const bx = br.left - base.left, by = br.top - base.top;
+  if (br.top - ar.bottom > 12) {
+    const x1 = ax + ar.width / 2, y1 = ay + ar.height;
+    const x2 = bx + br.width / 2, y2 = by;
+    const k = Math.max(22, (y2 - y1) * 0.45);
+    return `M${x1},${y1} C${x1},${y1 + k} ${x2},${y2 - k} ${x2},${y2}`;
+  }
+  const right = br.left >= ar.left;
+  const x1 = right ? ax + ar.width : ax;
+  const x2 = right ? bx : bx + br.width;
+  const y1 = ay + ar.height / 2, y2 = by + br.height / 2;
+  const k = Math.max(26, Math.abs(x2 - x1) * 0.5) * (right ? 1 : -1);
+  return `M${x1},${y1} C${x1 + k},${y1} ${x2 - k},${y2} ${x2},${y2}`;
+}
+
 function drawLinks() {
   const track = $('rm-track');
   if (!track) return;
@@ -804,34 +855,34 @@ function drawLinks() {
 
   const base = track.getBoundingClientRect();
   const shown = el => el && el.offsetParent !== null;
+  const structural = structuralEdges();
+  const tree = structural.size > 0;
 
-  (RM.data.edges || []).filter(e => e.style === 'dashed').forEach(e => {
+  // Thu thap truoc de con chia lan; bo qua canh da nam trong cau truc cay.
+  const items = [];
+  (RM.data.edges || []).forEach(e => {
+    if (e.style !== 'dashed') return;
+    if (structural.has(`${e.from}>${e.to}`)) return;
     const a = track.querySelector(`.rm-card[data-node="${CSS.escape(e.from)}"]`);
     const b = track.querySelector(`.rm-card[data-node="${CSS.escape(e.to)}"]`);
     if (!shown(a) || !shown(b)) return;
-
     const ar = a.getBoundingClientRect(), br = b.getBoundingClientRect();
-    const ax = ar.left - base.left, ay = ar.top - base.top;
-    const bx = br.left - base.left, by = br.top - base.top;
-    let d;
-    if (br.top - ar.bottom > 12) {
-      // muc phu thuoc nam duoi: day A -> dinh B
-      const x1 = ax + ar.width / 2, y1 = ay + ar.height;
-      const x2 = bx + br.width / 2, y2 = by;
-      const k = Math.max(22, (y2 - y1) * 0.45);
-      d = `M${x1},${y1} C${x1},${y1 + k} ${x2},${y2 - k} ${x2},${y2}`;
-    } else {
-      // cung hang hoac nam tren: di canh ben
-      const right = br.left >= ar.left;
-      const x1 = right ? ax + ar.width : ax;
-      const x2 = right ? bx : bx + br.width;
-      const y1 = ay + ar.height / 2, y2 = by + br.height / 2;
-      const k = Math.max(26, Math.abs(x2 - x1) * 0.5) * (right ? 1 : -1);
-      d = `M${x1},${y1} C${x1 + k},${y1} ${x2 - k},${y2} ${x2},${y2}`;
-    }
+    items.push({ e, ar, br, top: Math.min(ar.top, br.top), bot: Math.max(ar.bottom, br.bottom) });
+  });
+
+  // Chia lan kieu tham lam: duong nao chong doan doc voi duong da co thi day ra lan ngoai.
+  const laneEnds = [];
+  items.sort((p, q) => p.top - q.top).forEach(it => {
+    let lane = laneEnds.findIndex(end => it.top >= end);
+    if (lane === -1) { lane = laneEnds.length; laneEnds.push(0); }
+    laneEnds[lane] = it.bot + 6;
+    it.lane = Math.min(lane, 2);      // toi da 3 lan, con lai dung chung lan ngoai cung
+  });
+
+  items.forEach(({ e, ar, br, lane }) => {
     const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     p.setAttribute('class', 'rm-link');
-    p.setAttribute('d', d);
+    p.setAttribute('d', tree ? gutterPath(ar, br, base, lane) : bezierPath(ar, br, base));
     p.setAttribute('marker-end', 'url(#rmArrow)');
     p.dataset.from = e.from;
     p.dataset.to = e.to;

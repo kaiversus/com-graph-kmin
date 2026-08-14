@@ -847,7 +847,13 @@ th { background: #f1f5f9; font-weight: 600; }
   border-radius: 2px;
 }
 .rm-links { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; overflow: visible; }
-.rm-link { fill: none; stroke: #cbd5e1; stroke-width: 1.6; stroke-dasharray: 5 4; transition: stroke 0.15s, opacity 0.15s, stroke-width 0.15s; }
+/* Duong noi giua cac bac: net lien manh, bo goc tron (stroke-linejoin) cho gon gang.
+   Truoc day dung net dut + duong cong bezier -> nhieu duong dan vao nhau nhin roi mat. */
+.rm-link {
+  fill: none; stroke: #cbd5e1; stroke-width: 1.6;
+  stroke-linejoin: round; stroke-linecap: round;
+  transition: stroke 0.15s, opacity 0.15s, stroke-width 0.15s;
+}
 .rm-link.is-hot { stroke: #e11d48; stroke-width: 2.4; opacity: 1; }
 .rm-track.is-focused .rm-link:not(.is-hot) { opacity: 0.12; }
 
@@ -886,6 +892,10 @@ th { background: #f1f5f9; font-weight: 600; }
 .rm-stage[aria-expanded="false"] .rm-stage-caret { transform: rotate(-90deg); }
 .rm-stage-body { padding-top: 4px; }
 .rm-stage-body[hidden] { display: none; }
+/* Mang le trai: cho duong noi giua cac bac chay doc ma khong de len the nao. */
+.rm-stage.is-tree .rm-stage-body { padding-left: 44px; }
+/* 34px = 13 (le) + 2x9 (3 lan) + 3 du — hep hon la duong chay ra ngoai khung. */
+@media (max-width: 720px) { .rm-stage.is-tree .rm-stage-body { padding-left: 34px; } }
 .rm-stage-empty { padding: 10px 4px; font-size: 12.5px; color: var(--muted); font-style: italic; }
 
 .rm-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 11px; }
@@ -895,9 +905,35 @@ th { background: #f1f5f9; font-weight: 600; }
 .rm-branch[hidden] { display: none; }
 .rm-branch + .rm-branch { padding-top: 14px; border-top: 1px dashed #e2e8f0; }
 
-/* The ky nang chot nhanh: to hon, dam hon the kien thuc ben duoi */
-.rm-card-target { border-left-width: 5px; padding: 13px 15px 13px 13px; box-shadow: 0 1px 3px rgba(15,23,42,.05); }
-.rm-card-target .rm-card-title { font-size: 14.5px; }
+/* ---- KY NANG vs KIEN THUC: phai tach duoc chi bang cai liec mat ----
+   Ky nang = cot moc, phai NANG len: cao hon, nen trang, bo goc vuong hon,
+   co dai gay o canh trai. Kien thuc = vat lieu, phai LUI xuong: nho hon,
+   nen xam nhat, bo goc tron hon, vien net dut. */
+.rm-card-target {
+  padding: 15px 16px 15px 15px; border-radius: 12px;
+  border-left-width: 6px;
+  background: #fff;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, .07);
+}
+.rm-card-target .rm-card-title { font-size: 15px; font-weight: 800; letter-spacing: -.01em; }
+/* dai gay doc canh trai — dau hieu "day la cot moc cua nhanh".
+   Mau bam theo TRANG THAI, dung cung bang mau voi vien trai. */
+.rm-card-target::before {
+  content: ''; position: absolute; left: -6px; top: 50%; transform: translateY(-50%);
+  width: 6px; height: 28px; border-radius: 3px; background: #cbd5e1;
+}
+.rm-card-target.is-done::before   { background: #16a34a; }
+.rm-card-target.is-prog::before   { background: #d97706; }
+.rm-card-target.is-locked::before { background: #dc2626; }
+.rm-card-target:hover { box-shadow: 0 6px 20px rgba(15, 23, 42, .12); }
+
+/* Kien thuc: lui hon mot bac de khong tranh cho voi ky nang */
+.rm-card.is-know:not(.rm-card-target) {
+  padding: 9px 12px 9px 10px; border-radius: 14px;
+  background: #fbfcfe; border-left-width: 3px;
+}
+.rm-card.is-know:not(.rm-card-target) .rm-card-title { font-size: 12.5px; font-weight: 600; }
+.rm-card.is-know:not(.rm-card-target) .rm-card-ico { width: 17px; height: 17px; font-size: 10px; }
 
 .rm-branch-dep {
   margin: 7px 0 0 13px; font-size: 11.5px; color: #64748b;

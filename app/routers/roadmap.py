@@ -116,6 +116,30 @@ LEVEL_LABEL = {
 }
 
 
+def _skill_depths(prereq_map: dict) -> dict:
+    """skill_id -> bậc (0 = học được ngay, không phụ thuộc skill nào khác trong vai trò).
+
+    Bậc = đường đi DÀI NHẤT tới nó trong DAG tiên quyết, nên một skill luôn nằm sau
+    MỌI thứ nó cần, không chỉ sau cái gần nhất.
+
+    Chu trình trong data (A cần B, B cần A) sẽ không bao giờ hội tụ. Thay vì treo vòng
+    lặp, chạy tối đa len(nodes) vòng rồi dừng — các node trong chu trình giữ bậc cuối
+    tính được, roadmap vẫn vẽ ra thay vì sập. (Chặn chu trình từ tầng import là việc
+    khác, xem 04-backlog.md mục 4.)
+    """
+    depth = {sid: 0 for sid in prereq_map}
+    for _ in range(len(depth)):
+        changed = False
+        for sid, prereqs in prereq_map.items():
+            want = max((depth[p] + 1 for p in prereqs if p in depth), default=0)
+            if want > depth[sid]:
+                depth[sid] = want
+                changed = True
+        if not changed:
+            break
+    return depth
+
+
 def _make_group(key, label, kind, node_ids, status_by_id, personalized):
     """Gom 1 chặng + đếm tiến độ của chặng đó."""
     done = in_progress = 0
@@ -373,15 +397,23 @@ def _build_role_tree(root, skills, prereqs, acc_map, know_prof, res_skill, res_k
         })
     skill_id_set = {it["ref_id"] for it in skill_items}
 
-    # ---- Skill nodes: root → skill, xếp tầng theo độ khó ----
-    KNOW_TIER = len(SKILL_LEVELS) + 2  # dưới mọi skill
+    # ---- BẬC phụ thuộc ----
+    # Bậc suy từ chính dữ liệu tiên quyết Skill->Skill, KHÔNG phải từ độ khó tự khai.
+    # Độ khó chỉ còn là nhãn trên thẻ; thứ tự học do graph quyết định.
+    prereq_skill_map = {
+        it["ref_id"]: [p["prereq_id"] for p in prereq_by_skill.get(it["ref_id"], [])
+                       if p["prereq_id"] in skill_id_set and p["prereq_id"] != it["ref_id"]]
+        for it in skill_items
+    }
+    depth = _skill_depths(prereq_skill_map)
+
     status_by_id: dict[str, str | None] = {}
-    by_level: dict[str, list] = {}
+    item_by_ref = {it["ref_id"]: it for it in skill_items}
     for it in skill_items:
         nid = f"skill_{it['ref_id']}"
-        tier = 1 + _LEVEL_RANK.get(it["level"], 0)
         nodes.append({
-            "id": nid, "label": it["name"], "type": "Skill", "level": tier,
+            "id": nid, "label": it["name"], "type": "Skill",
+            "level": 1 + depth.get(it["ref_id"], 0),
             "meta": IMPORTANCE_LABEL[it["importance"]],
             "status": it["status"] if personalized else None,
             "ref_id": it["ref_id"], "importance": it["importance"],
@@ -391,36 +423,44 @@ def _build_role_tree(root, skills, prereqs, acc_map, know_prof, res_skill, res_k
         })
         seen.add(nid)
         status_by_id[nid] = it["status"] if personalized else None
-        by_level.setdefault(it["level"], []).append(nid)
         edges.append({"from": root_id, "to": nid})
 
-    # ---- Tiên quyết ----
-    # Cạnh dashed luôn đi theo chiều: tiên quyết -> mục phụ thuộc.
-    support_ids = []
+    # ---- NHÁNH: mỗi skill là 1 nhánh, knowledge tiên quyết nằm NGAY TRONG nhánh đó ----
+    # Duyệt theo (bậc, thứ tự Cypher) để mục dùng chung rơi vào nhánh SỚM NHẤT cần nó —
+    # hiện đúng một lần, các nhánh sau chỉ còn cạnh nét đứt trỏ ngược về.
+    # Cạnh dashed vẫn giữ quy ước: from = tiên quyết, to = mục phụ thuộc.
     support_items = []
-    for skill_id, plist in prereq_by_skill.items():
-        sid = f"skill_{skill_id}"
-        if sid not in seen:
-            continue
-        for p in plist:
+    branches = []
+    for idx in sorted(range(len(skill_items)),
+                      key=lambda i: (depth.get(skill_items[i]["ref_id"], 0), i)):
+        it = skill_items[idx]
+        ref_id = it["ref_id"]
+        sid = f"skill_{ref_id}"
+        tier = depth.get(ref_id, 0)
+        prereq_ids, shared_ids, depends_on = [], [], []
+        for p in prereq_by_skill.get(ref_id, []):
             ref = p["prereq_id"]
             if ref in skill_id_set:
-                # phụ thuộc giữa 2 skill vai trò: skill nền → skill phụ thuộc (thứ tự học)
+                # tiên quyết là skill khác của vai trò → nó có nhánh riêng ở bậc trước
                 edges.append({"from": f"skill_{ref}", "to": sid, "style": "dashed"})
+                depends_on.append(item_by_ref[ref]["name"])
                 continue
             pid = f"prereq_{ref}"
             ptype = p.get("prereq_type") or "Knowledge"
-            if pid not in seen:
-                # Knowledge nay CÓ trạng thái (proxy qua Skill), không còn bỏ trắng.
+            if pid in seen:
+                # đã thuộc về một nhánh sớm hơn — chỉ nối cạnh, không nhân đôi thẻ
+                shared_ids.append(pid)
+            else:
                 pprof = _prereq_prof(p)
                 pstatus = _status_of(pprof)
                 pres = (res_know if ptype == "Knowledge" else res_skill).get(
                     ref, {"contents": 0, "quizzes": 0, "mentors": 0})
                 nodes.append({
-                    "id": pid, "label": p["prereq_name"], "type": ptype, "level": KNOW_TIER,
+                    "id": pid, "label": p["prereq_name"], "type": ptype,
+                    "level": 1 + tier,
                     "meta": "", "status": pstatus if personalized else None,
                     "ref_id": ref, "importance": _importance_of(p.get("weight")),
-                    # Nền tảng nằm ở đáy chuỗi tiên quyết — không ai chặn nó.
+                    # Knowledge nằm ở đáy chuỗi tiên quyết — không ai chặn nó.
                     "ready": True, "locked_by": [],
                     "difficulty": p.get("prereq_level"),
                     "proficiency": pprof,
@@ -429,7 +469,7 @@ def _build_role_tree(root, skills, prereqs, acc_map, know_prof, res_skill, res_k
                 })
                 seen.add(pid)
                 status_by_id[pid] = pstatus if personalized else None
-                support_ids.append(pid)
+                prereq_ids.append(pid)
                 support_items.append({
                     "ref_id": ref, "name": p["prereq_name"], "type": ptype,
                     "level": p.get("prereq_level") or "beginner",
@@ -439,15 +479,30 @@ def _build_role_tree(root, skills, prereqs, acc_map, know_prof, res_skill, res_k
                 })
             edges.append({"from": pid, "to": sid, "style": "dashed"})
 
-    # ---- Chặng: "nền tảng cần có" đứng ĐẦU (phải học trước), rồi tới các cấp độ khó ----
+        branches.append({
+            "tier": tier,
+            "key": sid,
+            "label": it["name"],
+            "target_id": sid,
+            # Học từ trên xuống: kiến thức nền trước, rồi mới chốt kỹ năng.
+            "prereq_ids": prereq_ids,
+            "shared_ids": shared_ids,
+            "depends_on": depends_on,
+            "node_ids": prereq_ids + [sid],
+        })
+
+    # ---- Chặng = BẬC. Mỗi bậc chứa các nhánh học song song được. ----
     groups = []
-    if support_ids:
-        groups.append(_make_group("support", "Nền tảng cần có", "support",
-                                  support_ids, status_by_id, personalized))
-    groups += [
-        _make_group(lvl, LEVEL_LABEL[lvl], "level", by_level[lvl], status_by_id, personalized)
-        for lvl in SKILL_LEVELS if lvl in by_level
-    ]
+    for tier in sorted({b["tier"] for b in branches}):
+        bs = [b for b in branches if b["tier"] == tier]
+        ids = [nid for b in bs for nid in b["node_ids"]]
+        # label = tên các năng lực chốt được ở bậc này, để đọc lướt là biết bậc này về gì.
+        # Số bậc để riêng ở `tier` — FE hiện thành huy hiệu, khỏi lặp chữ trong label.
+        g = _make_group(f"tier_{tier + 1}", " · ".join(b["label"] for b in bs), "tier",
+                        ids, status_by_id, personalized)
+        g["tier"] = tier + 1
+        g["branches"] = [{k: v for k, v in b.items() if k != "tier"} for b in bs]
+        groups.append(g)
     current = _mark_current(groups, personalized)
 
     # Nền tảng tính vào tiến độ chung — nó là việc phải học thật, không phải chú thích.

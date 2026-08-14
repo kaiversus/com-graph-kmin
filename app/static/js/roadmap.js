@@ -528,19 +528,25 @@ function renderTrack() {
          <span class="rm-stage-count">${g.done}/${g.total} xong</span>`
       : `<span class="rm-stage-count">${g.total} mục</span>`;
 
-    const cards = g.node_ids.map(id => RM.byId.get(id)).filter(Boolean).map(cardHtml).join('');
+    // by-role tra ve `branches` (cay con: kien thuc nen -> ky nang chot).
+    // by-area khong co -> ve luoi the phang nhu cu.
+    const body = (g.branches && g.branches.length)
+      ? g.branches.map(branchHtml).join('')
+      : cardsHtml(g.node_ids);
+
+    const tierChip = g.tier ? `<span class="rm-stage-kind">Bậc ${g.tier}</span>` : '';
 
     parts.push(`
       <section class="${cls}" data-key="${escapeHtml(g.key)}" aria-expanded="true">
         <button type="button" class="rm-stage-head" aria-controls="rm-body-${escapeHtml(g.key)}">
           <span class="rm-stage-idx">${complete ? '✓' : num}</span>
           <span class="rm-stage-name">${escapeHtml(g.label)}</span>
-          ${support ? '<span class="rm-stage-kind">bổ trợ</span>' : ''}
+          ${tierChip}${support ? '<span class="rm-stage-kind">bổ trợ</span>' : ''}
           ${bar}
           <span class="rm-stage-caret" aria-hidden="true"></span>
         </button>
         <div class="rm-stage-body" id="rm-body-${escapeHtml(g.key)}">
-          ${cards ? `<div class="rm-cards">${cards}</div>` : '<div class="rm-stage-empty">Chặng này chưa có mục nào.</div>'}
+          ${body || '<div class="rm-stage-empty">Chặng này chưa có mục nào.</div>'}
         </div>
       </section>`);
   });
@@ -552,6 +558,39 @@ function renderTrack() {
   canvas.innerHTML = `<div class="rm-track" id="rm-track">${parts.join('')}</div>`;
   wireTrack(canvas.querySelector('#rm-track'));
   applyFilters();
+}
+
+function cardsHtml(ids) {
+  const cards = (ids || []).map(id => RM.byId.get(id)).filter(Boolean).map(cardHtml).join('');
+  return cards ? `<div class="rm-cards">${cards}</div>` : '';
+}
+
+// Mot NHANH = mot nang luc: kien thuc nen xep TRUOC, ky nang chot xep SAU.
+// Doc tu tren xuong chinh la thu tu hoc, khong con kieu "tang skill / tang knowledge".
+function branchHtml(b) {
+  const dep = (b.depends_on || []).length
+    ? `<span class="rm-branch-dep">cần xong trước: ${escapeHtml(b.depends_on.join(', '))}</span>` : '';
+
+  const prereqs = (b.prereq_ids || []).map(id => RM.byId.get(id)).filter(Boolean);
+  const shared = (b.shared_ids || []).map(id => RM.byId.get(id)).filter(Boolean);
+  const target = RM.byId.get(b.target_id);
+
+  const steps = [];
+  prereqs.forEach(n => steps.push(`<li class="rm-step-node">${cardHtml(n)}</li>`));
+  // Muc dung chung da hien o bac som hon — nhac lai bang mot dong tro nguoc, khong nhan doi the.
+  shared.forEach(n => steps.push(
+    `<li class="rm-step-node is-ref"><button type="button" class="rm-refchip" data-node="${escapeHtml(n.id)}">
+       ↑ ${escapeHtml(n.label)} <span>đã có ở bậc trước</span></button></li>`));
+  if (target) steps.push(`<li class="rm-step-node is-target">${cardHtml(target)}</li>`);
+
+  return `
+    <div class="rm-branch">
+      <div class="rm-branch-head">
+        <span class="rm-branch-name">${escapeHtml(b.label)}</span>
+        ${dep}
+      </div>
+      <ol class="rm-branch-steps">${steps.join('')}</ol>
+    </div>`;
 }
 
 function finishHtml() {
@@ -569,11 +608,18 @@ function cardHtml(n) {
   const pers = !!RM.data.personalized;
   const status = pers ? (n.status || 'not_started') : null;
   const locked = pers && n.ready === false && status !== 'done';
-  const cls = ['rm-card', pers ? STATUS_CLASS[status] : 'is-todo', locked ? 'is-locked' : ''].filter(Boolean).join(' ');
+  // Phan biet KY NANG / KIEN THUC ngay tren the: khac mau vien, khac huy hieu.
+  // Truoc day chi khac nhau o dong chu nho, nhin luot khong tach duoc hai loai.
+  const isSkill = n.type === 'Skill';
+  const cls = ['rm-card', isSkill ? 'is-skill' : 'is-know',
+    pers ? STATUS_CLASS[status] : 'is-todo', locked ? 'is-locked' : ''].filter(Boolean).join(' ');
   const icon = locked ? '🔒' : (pers ? (STATUS_ICON[status] || '') : '');
 
   const imp = IMP_BADGE[n.importance] || IMP_BADGE.optional;
-  const tags = [`<span class="rm-badge ${imp.cls}">${imp.star}${imp.label}</span>`];
+  const tags = [
+    `<span class="rm-badge type ${isSkill ? 'is-skill' : 'is-know'}">${isSkill ? '◆ Kỹ năng' : '○ Kiến thức'}</span>`,
+    `<span class="rm-badge ${imp.cls}">${imp.star}${imp.label}</span>`,
+  ];
   if (n.type === 'Knowledge' && n.kind) tags.push(`<span class="rm-badge kind">${escapeHtml(n.kind)}</span>`);
 
   // Hien con SO % ben canh thanh: "hoan thanh" gio la 100%, nen nguoi hoc phai thay ro
@@ -595,7 +641,8 @@ function cardHtml(n) {
   if (r.mentors) bits.push(`🎓 ${r.mentors}`);
   const res = bits.length ? `<span class="rm-card-res">${bits.join(' · ')}</span>` : '';
 
-  const sub = [TYPE_VI[n.type] || n.type, n.difficulty ? levelVi(n.difficulty) : ''].filter(Boolean).join(' · ');
+  // Loai da nam o huy hieu phia duoi -> dong nay chi con do kho, khong lap lai.
+  const sub = n.difficulty ? levelVi(n.difficulty) : '';
 
   return `
     <button type="button" class="${cls}" data-node="${escapeHtml(n.id)}" data-ref="${escapeHtml(n.ref_id || '')}">
@@ -621,6 +668,9 @@ function wireTrack(track) {
       applyFilters();
       return;
     }
+    // Chip "↑ ... đã có ở bậc trước" -> nhay ve dung the goc o bac som hon.
+    const ref = e.target.closest('.rm-refchip');
+    if (ref) { selectNode(ref.dataset.node); return; }
     const card = e.target.closest('.rm-card');
     if (card) selectNode(card.dataset.node);
   });
@@ -671,7 +721,14 @@ function applyFilters() {
       const n = RM.byId.get(card.dataset.node);
       const ok = !n || nodeMatches(n);
       card.hidden = !ok;
+      // an ca <li> bao ngoai, khong thi cay con con lai o trong danh so
+      const li = card.closest('.rm-step-node');
+      if (li) li.hidden = !ok;
       if (ok) visible++;
+    });
+    // Nhanh khong con the nao khop thi an luon ca dau nhanh.
+    stage.querySelectorAll('.rm-branch').forEach(br => {
+      br.hidden = active && !br.querySelector('.rm-card:not([hidden])');
     });
     shown += visible;
     stage.hidden = active && visible === 0;

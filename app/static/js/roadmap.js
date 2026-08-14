@@ -481,7 +481,8 @@ function wireGuide() {
 
 /* ---- Track ---- */
 
-// Chang "nen tang" (tien quyet ngoai danh sach chinh) dua len dau, danh so 0.
+// Thu tu chang do BACKEND quyet dinh (nen tang da duoc xep dau tu ben do).
+// Van loc lai mot lan de phong response cu con cache trong tab dang mo.
 function orderedGroups() {
   const gs = RM.data.groups || fallbackGroups();
   return [...gs.filter(g => g.kind === 'support'), ...gs.filter(g => g.kind !== 'support')];
@@ -520,9 +521,11 @@ function renderTrack() {
     if (complete) RM.collapsed.add(g.key);
 
     const cls = ['rm-stage', complete ? 'is-complete' : '', g.current ? 'is-current' : ''].filter(Boolean).join(' ');
-    const bar = (pers && !support && g.total)
+    // Chang nen tang gio CO thanh tien do nhu moi chang khac — no la viec phai hoc that,
+    // truoc day de trong nen nhin nhu chu thich va bi bo qua.
+    const bar = (pers && g.total)
       ? `<span class="rm-stage-bar"><i style="width:${g.percent}%"></i></span>
-         <span class="rm-stage-count">${g.done}/${g.total}</span>`
+         <span class="rm-stage-count">${g.done}/${g.total} xong</span>`
       : `<span class="rm-stage-count">${g.total} mục</span>`;
 
     const cards = g.node_ids.map(id => RM.byId.get(id)).filter(Boolean).map(cardHtml).join('');
@@ -573,8 +576,13 @@ function cardHtml(n) {
   const tags = [`<span class="rm-badge ${imp.cls}">${imp.star}${imp.label}</span>`];
   if (n.type === 'Knowledge' && n.kind) tags.push(`<span class="rm-badge kind">${escapeHtml(n.kind)}</span>`);
 
-  const prof = (pers && n.proficiency != null && n.proficiency > 0)
-    ? `<span class="rm-card-bar"><i style="width:${Math.round(n.proficiency * 100)}%"></i></span>` : '';
+  // Hien con SO % ben canh thanh: "hoan thanh" gio la 100%, nen nguoi hoc phai thay ro
+  // minh dang o 70% chu khong chi mot thanh mau doan chung.
+  const pct = (pers && n.proficiency != null && n.proficiency > 0)
+    ? Math.round(n.proficiency * 100) : null;
+  const prof = pct === null ? ''
+    : `<span class="rm-card-prog"><span class="rm-card-bar"><i style="width:${pct}%"></i></span>
+       <span class="rm-card-pct">${pct}%</span></span>`;
 
   const lock = locked && (n.locked_by || []).length
     ? `<span class="rm-card-lock">🔒 Cần trước: ${escapeHtml(n.locked_by.slice(0, 2).join(', '))}${n.locked_by.length > 2 ? ` +${n.locked_by.length - 2}` : ''}</span>`
@@ -822,7 +830,7 @@ function renderPanelOverview(panel) {
 
   const nav = orderedGroups().map(g =>
     `<button type="button" class="rm-linkbtn" data-stage="${escapeHtml(g.key)}">${escapeHtml(g.label)}${
-      pers && g.kind !== 'support' && g.total ? ` <span style="opacity:.6">${g.done}/${g.total}</span>` : ''}</button>`
+      pers && g.total ? ` <span style="opacity:.6">${g.done}/${g.total}</span>` : ''}</button>`
   ).join('');
 
   panel.innerHTML = `

@@ -963,9 +963,12 @@ th { background: #f1f5f9; font-weight: 600; }
 }
 .rm-card.is-done .rm-card-title { color: #14532d; }
 .rm-card-sub { display: block; margin-top: 3px; font-size: 11.5px; color: var(--muted); font-weight: 600; }
-.rm-card-bar { display: block; margin-top: 7px; height: 5px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
+.rm-card-prog { display: flex; align-items: center; gap: 7px; margin-top: 7px; }
+.rm-card-bar { display: block; flex: 1; height: 5px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
 .rm-card-bar i { display: block; height: 100%; border-radius: 999px; background: #d97706; }
+.rm-card-pct { flex: none; font-size: 11px; font-weight: 700; color: #b45309; font-variant-numeric: tabular-nums; }
 .rm-card.is-done .rm-card-bar i { background: #16a34a; }
+.rm-card.is-done .rm-card-pct { color: #15803d; }
 .rm-card-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
 .rm-card-lock { display: block; margin-top: 6px; font-size: 11.5px; font-weight: 600; color: #b91c1c; line-height: 1.4; }
 .rm-card-res  { display: block; margin-top: 6px; font-size: 11px; color: #0f766e; }

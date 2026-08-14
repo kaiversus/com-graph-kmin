@@ -56,9 +56,19 @@ def _effective_account(viewer: dict, account_id: str | None) -> str | None:
 SKILL_LEVELS = ["beginner", "intermediate", "advanced", "expert"]
 _LEVEL_RANK = {lvl: i for i, lvl in enumerate(SKILL_LEVELS)}
 
-# Ngưỡng proficiency (0..1) → trạng thái học. Đồng bộ với các band trong schema:
-# advanced (>=0.6) coi như "đã đạt" để hành nghề; dưới đó mà >0 là đang học.
-DONE_THRESHOLD = 0.6
+# HAI ngưỡng khác nhau, đừng gộp lại:
+#
+#   DONE_THRESHOLD  — "hoàn thành". Phải ĐẦY ĐỦ 100%. Một skill 0.9 vẫn là "đang học".
+#     Trước đây để 0.6 nên CSS 0.7 / JS 0.6 hiện dấu ✓ và chặng báo 100% dù chưa xong —
+#     thanh tiến độ nói dối. Tiến độ là thứ người học tin, không được rộng tay.
+#
+#   READY_THRESHOLD — "đủ nền để BẮT ĐẦU mục phụ thuộc". Thấp hơn hẳn, vì bắt buộc thành
+#     thạo tuyệt đối mới cho học tiếp thì không mục nào mở khoá được (không ai đạt 1.0),
+#     cả lộ trình sẽ khoá cứng 🔒 và mất luôn tác dụng gợi ý.
+#
+# Nói gọn: hoàn thành là 100%, nhưng đi tiếp thì chỉ cần vững (>=60%).
+DONE_THRESHOLD = 1.0
+READY_THRESHOLD = 0.6
 
 
 def _status_of(prof) -> str:
@@ -70,6 +80,11 @@ def _status_of(prof) -> str:
     if prof > 0:
         return "in_progress"
     return "not_started"
+
+
+def _unlocked(prof) -> bool:
+    """Tiên quyết này đã đủ vững để cho phép học mục phụ thuộc chưa?"""
+    return prof is not None and prof >= READY_THRESHOLD
 
 
 def _importance_of(weight) -> str:
@@ -121,13 +136,17 @@ def _make_group(key, label, kind, node_ids, status_by_id, personalized):
 
 
 def _mark_current(groups, personalized):
-    """Chặng "bạn đang ở đây" = chặng tính tiến độ đầu tiên chưa xong. Trả về key."""
+    """Chặng "bạn đang ở đây" = chặng đầu tiên chưa xong, theo đúng thứ tự học.
+
+    Chặng "nền tảng cần có" KHÔNG còn được bỏ qua: nó là tiên quyết, nằm đầu danh sách,
+    nên chưa xong nền thì "bạn đang ở đây" phải dừng ở đó chứ không nhảy sang Cơ bản.
+    """
     for g in groups:
         g["current"] = False
     if not personalized:
         return None
     for g in groups:
-        if g["kind"] != "support" and g["total"] and g["done"] < g["total"]:
+        if g["total"] and g["done"] < g["total"]:
             g["current"] = True
             return g["key"]
     return None
@@ -176,6 +195,26 @@ def _account_skill_map(session, account_id: str | None) -> dict:
         "MATCH (a:Account {id_account: $aid})-[hs:HAS_SKILL]->(s:Skill) "
         "RETURN s.id AS id, hs.proficiency AS prof",
         aid=account_id,
+    ).data()
+    return {r["id"]: r["prof"] for r in rows}
+
+
+def _knowledge_prof_map(session, account_id: str | None, know_ids: list) -> dict:
+    """knowledge_id -> proficiency (proxy).
+
+    Schema không có cạnh Account -> Knowledge, nên "học viên nắm kiến thức này chưa"
+    phải suy gián tiếp: lấy proficiency CAO NHẤT trong các Skill mà học viên có và
+    Skill đó REQUIRES kiến thức này. Sai số đã biết (xem 04-backlog.md mục 1) — nhưng
+    cả by-role và by-area đều dùng chung hàm này để ít nhất còn NHẤT QUÁN với nhau.
+    """
+    if not account_id or not know_ids:
+        return {}
+    rows = session.run(
+        "MATCH (a:Account {id_account: $aid})-[hs:HAS_SKILL]->(s:Skill)"
+        "-[:REQUIRES]->(k:Knowledge) "
+        "WHERE k.id IN $ids "
+        "RETURN k.id AS id, max(hs.proficiency) AS prof",
+        aid=account_id, ids=know_ids,
     ).data()
     return {r["id"]: r["prof"] for r in rows}
 
@@ -263,6 +302,10 @@ def roadmap_by_role(request: Request, role_id: str, account_id: str | None = Non
         skill_ids = [s["id"] for s in skills]
         prereq_skill_ids = [p["prereq_id"] for p in prereqs if p["prereq_type"] == "Skill"]
         prereq_know_ids = [p["prereq_id"] for p in prereqs if p["prereq_type"] == "Knowledge"]
+        # Tiến độ Knowledge nền tảng — CÙNG proxy với by-area (không có cạnh
+        # Account->Knowledge). Trước đây by-role bỏ trắng chỗ này nên chặng "nền tảng
+        # cần có" không có trạng thái, không đếm được, và không chặn nổi ai.
+        know_prof = _knowledge_prof_map(session, account_id, prereq_know_ids)
         res_skill = _skill_resources(session, list(set(skill_ids + prereq_skill_ids)))
         res_know = _knowledge_resources(session, prereq_know_ids)
         account = _account_name(session, account_id)
@@ -273,6 +316,7 @@ def roadmap_by_role(request: Request, role_id: str, account_id: str | None = Non
         skills=skills,
         prereqs=prereqs,
         acc_map=acc_map,
+        know_prof=know_prof,
         res_skill=res_skill,
         res_know=res_know,
         account=account,
@@ -280,7 +324,8 @@ def roadmap_by_role(request: Request, role_id: str, account_id: str | None = Non
     )
 
 
-def _build_role_tree(root, skills, prereqs, acc_map, res_skill, res_know, account, personalized):
+def _build_role_tree(root, skills, prereqs, acc_map, know_prof, res_skill, res_know,
+                     account, personalized):
     """
     Cây phẳng, KHÔNG còn node "Level" trung gian (bỏ theo yêu cầu — trùng nghĩa
     với màu vàng "đang học"). Thay vào đó:
@@ -288,7 +333,8 @@ def _build_role_tree(root, skills, prereqs, acc_map, res_skill, res_know, accoun
         ở trên → expert ở dưới) để vẫn đọc được thứ tự học.
       - Tiên quyết mà cũng là Skill của vai trò → KHÔNG nhân đôi node, chỉ vẽ 1
         cạnh phụ thuộc (nét đứt) giữa 2 skill (skill nền → skill phụ thuộc).
-      - Tiên quyết kiểu Knowledge → node riêng treo dưới cùng.
+      - Tiên quyết kiểu Knowledge → node riêng, gom vào chặng "nền tảng cần có"
+        và chặng đó đứng ĐẦU danh sách groups (học nền trước).
     """
     root_id = f"root_{root['id']}"
     nodes = [{"id": root_id, "label": root["name"], "type": root["type"], "level": 0,
@@ -300,14 +346,21 @@ def _build_role_tree(root, skills, prereqs, acc_map, res_skill, res_know, accoun
     for p in prereqs:
         prereq_by_skill.setdefault(p["skill_id"], []).append(p)
 
+    def _prereq_prof(p):
+        """proficiency của 1 tiên quyết, bất kể nó là Skill hay Knowledge."""
+        ref = p["prereq_id"]
+        return know_prof.get(ref) if p["prereq_type"] == "Knowledge" else acc_map.get(ref)
+
     # ---- Tính toán per-skill ----
     skill_items = []
     for s in skills:
         sid = s["id"]
         prof = acc_map.get(sid)
+        # Khoá theo MỌI tiên quyết — cả Skill lẫn Knowledge. Trước đây chỉ xét Skill nên
+        # một skill có nền tảng Knowledge chưa nắm vẫn báo "bắt đầu được ngay".
         locked_by = [
             p["prereq_name"] for p in prereq_by_skill.get(sid, [])
-            if p["prereq_type"] == "Skill" and _status_of(acc_map.get(p["prereq_id"])) != "done"
+            if not _unlocked(_prereq_prof(p))
         ]
         skill_items.append({
             "ref_id": sid, "name": s["name"], "type": "Skill",
@@ -344,6 +397,7 @@ def _build_role_tree(root, skills, prereqs, acc_map, res_skill, res_know, accoun
     # ---- Tiên quyết ----
     # Cạnh dashed luôn đi theo chiều: tiên quyết -> mục phụ thuộc.
     support_ids = []
+    support_items = []
     for skill_id, plist in prereq_by_skill.items():
         sid = f"skill_{skill_id}"
         if sid not in seen:
@@ -357,33 +411,50 @@ def _build_role_tree(root, skills, prereqs, acc_map, res_skill, res_know, accoun
             pid = f"prereq_{ref}"
             ptype = p.get("prereq_type") or "Knowledge"
             if pid not in seen:
-                pstatus = _status_of(acc_map.get(ref)) if ptype == "Skill" else None
+                # Knowledge nay CÓ trạng thái (proxy qua Skill), không còn bỏ trắng.
+                pprof = _prereq_prof(p)
+                pstatus = _status_of(pprof)
+                pres = (res_know if ptype == "Knowledge" else res_skill).get(
+                    ref, {"contents": 0, "quizzes": 0, "mentors": 0})
                 nodes.append({
                     "id": pid, "label": p["prereq_name"], "type": ptype, "level": KNOW_TIER,
                     "meta": "", "status": pstatus if personalized else None,
                     "ref_id": ref, "importance": _importance_of(p.get("weight")),
+                    # Nền tảng nằm ở đáy chuỗi tiên quyết — không ai chặn nó.
                     "ready": True, "locked_by": [],
                     "difficulty": p.get("prereq_level"),
+                    "proficiency": pprof,
                     "description": p.get("prereq_description"),
-                    "resources": (res_know if ptype == "Knowledge" else res_skill).get(
-                        ref, {"contents": 0, "quizzes": 0, "mentors": 0}),
+                    "resources": pres,
                 })
                 seen.add(pid)
                 status_by_id[pid] = pstatus if personalized else None
                 support_ids.append(pid)
+                support_items.append({
+                    "ref_id": ref, "name": p["prereq_name"], "type": ptype,
+                    "level": p.get("prereq_level") or "beginner",
+                    "prof": pprof, "status": pstatus,
+                    "importance": _importance_of(p.get("weight")), "weight": p.get("weight"),
+                    "ready": True, "locked_by": [], "resources": pres,
+                })
             edges.append({"from": pid, "to": sid, "style": "dashed"})
 
-    # ---- Chặng: theo cấp độ khó, chặng "nền" xếp cuối ----
-    groups = [
-        _make_group(lvl, LEVEL_LABEL[lvl], "level", by_level[lvl], status_by_id, personalized)
-        for lvl in SKILL_LEVELS if lvl in by_level
-    ]
+    # ---- Chặng: "nền tảng cần có" đứng ĐẦU (phải học trước), rồi tới các cấp độ khó ----
+    groups = []
     if support_ids:
         groups.append(_make_group("support", "Nền tảng cần có", "support",
                                   support_ids, status_by_id, personalized))
+    groups += [
+        _make_group(lvl, LEVEL_LABEL[lvl], "level", by_level[lvl], status_by_id, personalized)
+        for lvl in SKILL_LEVELS if lvl in by_level
+    ]
     current = _mark_current(groups, personalized)
 
-    summary = _summarize(skill_items, root, "kỹ năng", personalized, unit_label="skill")
+    # Nền tảng tính vào tiến độ chung — nó là việc phải học thật, không phải chú thích.
+    # Khi có nền tảng thì đơn vị đếm là "mục" vì danh sách trộn cả Skill lẫn Knowledge.
+    all_items = support_items + skill_items
+    unit_vi = "mục" if support_items else "kỹ năng"
+    summary = _summarize(all_items, root, unit_vi, personalized, unit_label="skill")
     summary["current_group"] = current
     return {"root": root, "account": account, "personalized": personalized,
             "nodes": nodes, "edges": edges, "groups": groups, "summary": summary}
@@ -425,18 +496,8 @@ def roadmap_by_area(request: Request, area_id: str, account_id: str | None = Non
 
         know_ids = [k["id"] for k in knowledge]
 
-        # "Tôi đang ở đâu" cho Knowledge (không có Account->Knowledge trực tiếp):
-        # proxy = proficiency CAO NHẤT của các Skill mà account đã có và Skill đó REQUIRES k.
-        know_prof = {}
-        if account_id and know_ids:
-            rows = session.run(
-                "MATCH (a:Account {id_account: $aid})-[hs:HAS_SKILL]->(s:Skill)"
-                "-[:REQUIRES]->(k:Knowledge) "
-                "WHERE k.id IN $ids "
-                "RETURN k.id AS id, max(hs.proficiency) AS prof",
-                aid=account_id, ids=know_ids,
-            ).data()
-            know_prof = {r["id"]: r["prof"] for r in rows}
+        # "Tôi đang ở đâu" cho Knowledge — proxy dùng chung với by-role.
+        know_prof = _knowledge_prof_map(session, account_id, know_ids)
 
         # tiên quyết giữa knowledge trong phạm vi (để tính readiness/thứ tự)
         prereq_pairs = []
@@ -488,7 +549,8 @@ def _build_area_tree(root, subareas, knowledge, know_prof, prereq_pairs, res_kno
         kid = k["id"]
         status = kstatus(kid)
         importance = _importance_of(k.get("weight"))
-        locked_by = [b for b in prereq_before.get(kid, []) if kstatus(b) != "done"]
+        # Mở khoá dùng READY_THRESHOLD, không dùng mốc "hoàn thành" — cùng quy tắc by-role.
+        locked_by = [b for b in prereq_before.get(kid, []) if not _unlocked(know_prof.get(b))]
         # map id tiên quyết -> tên để hiển thị
         locked_names = [nk["name"] for nk in knowledge if nk["id"] in locked_by]
         know_items.append({
@@ -602,7 +664,8 @@ def _summarize(items, root, unit_vi, personalized, unit_label):
         if not it["ready"]:
             why = "Cần học trước: " + ", ".join(it["locked_by"][:3])
         elif it["status"] == "in_progress":
-            why = "Đang học dở — hoàn thành nốt để đạt"
+            pct = round((it["prof"] or 0) * 100)
+            why = f"Đang ở {pct}% — còn {100 - pct}% nữa là hoàn thành"
         else:
             why = "Đã đủ điều kiện, bắt đầu được ngay"
         next_steps.append({
@@ -622,6 +685,15 @@ def _summarize(items, root, unit_vi, personalized, unit_label):
     elif done == total:
         headline = f"🎉 Xuất sắc! Bạn đã hoàn thành toàn bộ {total} {unit_vi} của lộ trình."
         sub = "Sẵn sàng cho thử thách tiếp theo!"
+    elif done == 0 and in_progress > 0:
+        # Chưa mục nào ĐỦ 100% nhưng đang dở nhiều — đừng nói "chưa bắt đầu", sai và nản.
+        # "Gần nhất" phải là mục có proficiency CAO NHẤT, không phải next_steps[0] (mục đó
+        # sắp theo độ ưu tiên học, không theo mức độ gần đích).
+        headline = f"💪 Đang học {in_progress}/{total} {unit_vi} — chưa mục nào đủ 100%."
+        closest = max((it for it in items if it["status"] == "in_progress"),
+                      key=lambda it: it["prof"] or 0, default=None)
+        sub = (f"Gần nhất: {closest['name']} — {round((closest['prof'] or 0) * 100)}%, "
+               f"hoàn thiện nốt để tính là xong." if closest else None)
     elif done == 0:
         headline = f"🚀 Bắt đầu hành trình! {total} {unit_vi} đang chờ bạn chinh phục."
         sub = f"Ưu tiên: {next_steps[0]['name']}" if next_steps else None

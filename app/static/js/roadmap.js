@@ -1,294 +1,934 @@
-// ===== Roadmap — dashboard lo trinh CA NHAN HOA (JobRole / KnowledgeArea + Account) =====
+// ===== Roadmap — lo trinh hoc dang "track": hero + cac chang + panel chi tiet =====
+// Khong dung vis-network o tab nay nua: card la DOM that (hover/keyboard/animation),
+// duong tien quyet ve bang SVG overlay dat DUOI card.
+//
+// Quy uoc du lieu tu API (xem app/routers/roadmap.py):
+//   - data.groups[]  : cac CHANG, moi chang co node_ids + tien do rieng.
+//   - node.level     : tang layout (int) — KHONG dung o day.
+//   - node.difficulty: do kho (string) — cai nay moi la do kho.
+//   - edge.style === 'dashed' : tien quyet, LUON from = tien quyet -> to = muc phu thuoc.
 
-// Mau theo LOAI node (khi khong ca nhan hoa, hoac cho root/level/area)
-const RM_TYPE_STYLES = {
-  JobRole:       { bg: '#4f46e5', border: '#3730a3' },
-  KnowledgeArea: { bg: '#7c3aed', border: '#5b21b6' },
-  Level:         { bg: '#f59e0b', border: '#d97706' },
-  Skill:         { bg: '#3b82f6', border: '#2563eb' },
-  Knowledge:     { bg: '#10b981', border: '#059669' },
-};
-// Mau theo TRANG THAI hoc (khi da chon Account)
-const RM_STATUS_STYLES = {
-  done:        { bg: '#22c55e', border: '#15803d', icon: '✓' },
-  in_progress: { bg: '#f59e0b', border: '#b45309', icon: '◐' },
-  not_started: { bg: '#94a3b8', border: '#64748b', icon: '○' },
-};
+const TYPE_VI = { Skill: 'Kỹ năng', Knowledge: 'Kiến thức', JobRole: 'Vai trò', KnowledgeArea: 'Lĩnh vực' };
 const IMP_BADGE = {
   essential: { cls: 'imp-essential', label: 'Bắt buộc', star: '⭐' },
   important: { cls: 'imp-important', label: 'Quan trọng', star: '' },
   optional:  { cls: 'imp-optional', label: 'Nên có', star: '' },
 };
-const LEVEL_VI = { beginner: 'Cơ bản', intermediate: 'Trung cấp', advanced: 'Nâng cao', expert: 'Chuyên sâu' };
+// Fallback khi server chua tra summary.level_label (nguon that nam o roadmap.py).
+const LEVEL_VI_FALLBACK = { beginner: 'Cơ bản', intermediate: 'Trung cấp', advanced: 'Nâng cao', expert: 'Chuyên sâu' };
+const STATUS_CLASS = { done: 'is-done', in_progress: 'is-prog', not_started: 'is-todo' };
+// Chi dung ky tu co san o moi font. "Dang hoc" ve bang CSS (::after), khong dung glyph
+// nua vi mot so ky tu khoi hinh hoc (U+25D0...) bi lech baseline tren Windows.
+const STATUS_ICON = { done: '✓', in_progress: '', not_started: '' };
 
-let rmNetwork = null;
+const RM = {
+  data: null,
+  byId: new Map(),        // node.id  -> node
+  byRef: new Map(),       // ref_id   -> node (uu tien node chinh, khong phai prereq_)
+  prereqOf: new Map(),    // node.id  -> [id cac tien quyet]
+  unlocks: new Map(),     // node.id  -> [id cac muc phu thuoc no]
+  filters: { q: '', status: 'all', essentialOnly: false },
+  showLinks: true,
+  collapsed: new Set(),   // key chang bi thu gon THU CONG
+  selected: null,
+  sourcesLoaded: false,
+  deepLinkDone: false,
+  viewer: {},             // { role, email, locked_account } tu /api/roadmap/sources
+};
 
-async function loadRoadmapSources() {
-  try {
-    const r = await fetch('/api/roadmap/sources');
-    const data = await r.json();
-    const rSel = document.getElementById('rm-role-sel');
-    rSel.innerHTML = '<option value="">-- Chọn JobRole --</option>';
-    (data.roles || []).forEach(x => rSel.appendChild(new Option(x.name || x.id, x.id)));
-
-    const aSel = document.getElementById('rm-area-sel');
-    aSel.innerHTML = '<option value="">-- Chọn KnowledgeArea --</option>';
-    (data.areas || []).forEach(x => aSel.appendChild(new Option(x.name || x.id, x.id)));
-
-    const accSel = document.getElementById('rm-account-sel');
-    accSel.innerHTML = '<option value="">-- Không chọn (bản chung) --</option>';
-    (data.accounts || []).forEach(x => accSel.appendChild(new Option(x.name || x.id, x.id)));
-  } catch (e) {
-    console.warn('[roadmap] Failed to load sources:', e);
-  }
-}
+/* ---------------------------------------------------------------- helpers */
 
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
-function nodeVisual(n, personalized) {
-  // Root/Level/KnowledgeArea container: luon theo loai. Skill/Knowledge: theo trang thai neu ca nhan hoa.
-  const isLeaf = n.type === 'Skill' || n.type === 'Knowledge';
-  if (personalized && isLeaf && n.status) {
-    const st = RM_STATUS_STYLES[n.status] || RM_STATUS_STYLES.not_started;
-    const locked = n.ready === false && n.status !== 'done';
-    return { bg: st.bg, border: locked ? '#dc2626' : st.border, icon: locked ? '🔒' : st.icon, locked };
-  }
-  const ts = RM_TYPE_STYLES[n.type] || RM_TYPE_STYLES.Skill;
-  return { bg: ts.bg, border: ts.border, icon: '', locked: false };
+// Tim kiem khong dau: "co ban" khop "Cơ bản".
+function deaccent(s) {
+  return String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[đĐ]/g, 'd').toLowerCase();
 }
 
-function renderRoadmap(data) {
-  const canvas = document.getElementById('rm-canvas');
-  document.getElementById('rm-legend').style.display = 'flex';
-  canvas.innerHTML = '<div id="rm-tree"></div>';
+function levelVi(key) {
+  const map = (RM.data && RM.data.summary && RM.data.summary.level_label) || LEVEL_VI_FALLBACK;
+  return map[key] || key || '';
+}
 
-  const panel = document.getElementById('rm-panel');
-  const personalized = !!data.personalized;
-  // Legend trạng thái chỉ có nghĩa khi tô màu theo tiến độ (đã chọn học viên)
-  document.getElementById('rm-legend-status').style.display = personalized ? 'inline-flex' : 'none';
+const $ = id => document.getElementById(id);
 
-  if (!data.nodes.length) {
-    canvas.innerHTML = '<div class="roadmap-empty-state"><div class="res-icon">📭</div><h3>Không có dữ liệu</h3><p>Vai trò/lĩnh vực này chưa có skills hoặc knowledge nào.</p></div>';
-    panel.style.display = 'none';
+function debounce(fn, ms) {
+  let t;
+  return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+}
+
+function isLeaf(n) { return n.type === 'Skill' || n.type === 'Knowledge'; }
+
+/* ------------------------------------------------------------ nap dropdown */
+
+async function loadRoadmapSources() {
+  syncKindUI();
+  if (RM.sourcesLoaded) { applyDeepLink(); return; }
+  try {
+    const r = await fetch('/api/roadmap/sources');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+
+    fillSelect($('rm-role-sel'), data.roles, '-- Chọn vai trò --');
+    fillSelect($('rm-area-sel'), data.areas, '-- Chọn lĩnh vực --');
+    // Ghi ro hoc vien nao co du lieu — chon nham account rong thi ca lo trinh xam het.
+    fillSelect($('rm-account-sel'), data.accounts, 'Bản chung (chưa cá nhân hoá)', x => {
+      const name = x.name || x.id;
+      if (x.skill_count == null) return name;
+      return x.skill_count > 0 ? `${name} — ${x.skill_count} kỹ năng` : `${name} — chưa có dữ liệu`;
+    });
+
+    applyViewer(data.viewer);
+    RM.sourcesLoaded = true;
+    applyDeepLink();
+  } catch (e) {
+    console.warn('[roadmap] Failed to load sources:', e);
+    setHint('Không nạp được danh sách. Kiểm tra kết nối Neo4j rồi mở lại tab này.');
+  }
+}
+
+// Giu nguyen lua chon cu khi nap lai (tab bi bam nhieu lan).
+function fillSelect(sel, rows, placeholder, label) {
+  const keep = sel.value;
+  sel.innerHTML = '';
+  sel.appendChild(new Option(placeholder, ''));
+  (rows || []).forEach(x => sel.appendChild(new Option(label ? label(x) : (x.name || x.id), x.id)));
+  if (keep && [...sel.options].some(o => o.value === keep)) sel.value = keep;
+}
+
+// Hoc vien khong duoc chon hoc vien khac -> giau han o chon di, khoi gay hieu nham.
+// Day chi la lop trang tri: server da ep account_id theo phien dang nhap roi.
+function applyViewer(viewer) {
+  RM.viewer = viewer || {};
+  if (RM.viewer.role !== 'user') return;
+  const field = $('rm-account-sel').closest('.rm-field');
+  const sel = $('rm-account-sel');
+  if (RM.viewer.locked_account) {
+    sel.value = RM.viewer.locked_account;
+    if (field) field.hidden = true;
+  } else if (field) {
+    // Tai khoan hoc vien chua duoc gan Account nao -> noi thang, dung de man hinh trong tron.
+    field.hidden = true;
+    setHint('Tài khoản của bạn chưa được gắn với hồ sơ học tập nào trong hệ thống. '
+      + 'Liên hệ quản trị viên để được gắn Account.');
+  }
+}
+
+function currentKind() { return $('rm-kind-sel').value === 'area' ? 'area' : 'role'; }
+function targetSelect() { return currentKind() === 'area' ? $('rm-area-sel') : $('rm-role-sel'); }
+
+function syncKindUI() {
+  const area = currentKind() === 'area';
+  $('rm-role-sel').hidden = area;
+  $('rm-area-sel').hidden = !area;
+  $('rm-target-label').textContent = area ? 'Lĩnh vực' : 'Vai trò';
+  $('rm-target-label').setAttribute('for', area ? 'rm-area-sel' : 'rm-role-sel');
+}
+
+function setHint(msg) {
+  const el = $('rm-setup-hint');
+  el.textContent = msg || '';
+  el.hidden = !msg;
+}
+
+/* ------------------------------------------------------------- deep-link */
+
+function writeDeepLink(kind, id, acc) {
+  const u = new URL(location.href);
+  u.searchParams.set('rm_kind', kind);
+  u.searchParams.set('rm_id', id);
+  if (acc) u.searchParams.set('rm_acc', acc); else u.searchParams.delete('rm_acc');
+  history.replaceState({}, '', u);
+}
+
+function applyDeepLink() {
+  if (RM.deepLinkDone) return;
+  const p = new URLSearchParams(location.search);
+  const id = p.get('rm_id');
+  if (!id) return;
+  RM.deepLinkDone = true;
+  const kind = p.get('rm_kind') === 'area' ? 'area' : 'role';
+  $('rm-kind-sel').value = kind;
+  syncKindUI();
+  const sel = targetSelect();
+  if (![...sel.options].some(o => o.value === id)) {
+    setHint('Liên kết trỏ tới một mục không còn tồn tại.');
+    return;
+  }
+  sel.value = id;
+  const acc = p.get('rm_acc');
+  if (acc && [...$('rm-account-sel').options].some(o => o.value === acc)) $('rm-account-sel').value = acc;
+  generate();
+}
+
+/* ---------------------------------------------------------------- fetch */
+
+async function generate() {
+  const kind = currentKind();
+  const id = targetSelect().value;
+  if (!id) {
+    setHint(kind === 'area' ? 'Hãy chọn một lĩnh vực trước khi tạo lộ trình.' : 'Hãy chọn một vai trò trước khi tạo lộ trình.');
+    targetSelect().focus();
+    return;
+  }
+  setHint('');
+  const acc = $('rm-account-sel').value;
+  showSkeleton();
+  try {
+    const qs = acc ? `?account_id=${encodeURIComponent(acc)}` : '';
+    const r = await fetch(`/api/roadmap/by-${kind}/${encodeURIComponent(id)}${qs}`);
+    if (r.status === 404) throw new Error(kind === 'area' ? 'Không tìm thấy lĩnh vực này.' : 'Không tìm thấy vai trò này.');
+    if (!r.ok) throw new Error(`Máy chủ trả về HTTP ${r.status}`);
+    writeDeepLink(kind, id, acc);
+    renderAll(await r.json());
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+function showSkeleton() {
+  $('rm-hero').innerHTML = '';
+  $('rm-toolbar').innerHTML = '';
+  $('rm-panel').hidden = true;
+  $('rm-canvas').innerHTML = [0, 1, 2].map(() => `
+    <div class="rm-skel-stage">
+      <div class="rm-skel-line"></div>
+      <div class="rm-skel-cards">${'<div class="rm-skel-card"></div>'.repeat(3)}</div>
+    </div>`).join('');
+}
+
+function showError(msg) {
+  $('rm-hero').innerHTML = '';
+  $('rm-toolbar').innerHTML = '';
+  $('rm-panel').hidden = true;
+  $('rm-canvas').innerHTML =
+    `<div class="rm-error"><div class="res-icon">⚠️</div><strong>Không tạo được lộ trình</strong>
+     <p>${escapeHtml(msg)}</p><button type="button" id="rm-retry">Thử lại</button></div>`;
+  const btn = $('rm-retry');
+  if (btn) btn.addEventListener('click', generate);
+}
+
+/* ---------------------------------------------------------------- render */
+
+function renderAll(data) {
+  RM.data = data;
+  RM.selected = null;
+  RM.collapsed = new Set();
+  RM.filters = { q: '', status: 'all', essentialOnly: false };
+
+  RM.byId = new Map(data.nodes.map(n => [n.id, n]));
+  RM.byRef = new Map();
+  data.nodes.forEach(n => {
+    if (!n.ref_id) return;
+    const primary = n.id.startsWith('skill_') || n.id.startsWith('knowledge_');
+    if (primary || !RM.byRef.has(n.ref_id)) RM.byRef.set(n.ref_id, n);
+  });
+
+  RM.prereqOf = new Map();
+  RM.unlocks = new Map();
+  (data.edges || []).filter(e => e.style === 'dashed').forEach(e => {
+    if (!RM.byId.has(e.from) || !RM.byId.has(e.to)) return;
+    if (!RM.prereqOf.has(e.to)) RM.prereqOf.set(e.to, []);
+    RM.prereqOf.get(e.to).push(e.from);
+    if (!RM.unlocks.has(e.from)) RM.unlocks.set(e.from, []);
+    RM.unlocks.get(e.from).push(e.to);
+  });
+
+  const leaves = data.nodes.filter(isLeaf);
+  if (!leaves.length) {
+    $('rm-hero').innerHTML = '';
+    $('rm-toolbar').innerHTML = '';
+    $('rm-panel').hidden = true;
+    $('rm-canvas').innerHTML =
+      `<div class="roadmap-empty-state"><div class="res-icon">📭</div>
+       <h3>Lộ trình này chưa có nội dung</h3>
+       <p>${escapeHtml(data.root.name)} chưa được gắn kỹ năng hoặc kiến thức nào trong graph.</p></div>`;
     return;
   }
 
-  const nodes = data.nodes.map(n => {
-    const vis = nodeVisual(n, personalized);
-    const iconPrefix = vis.icon ? vis.icon + ' ' : '';
-    const metaLine = n.meta ? `\n${n.meta}` : '';
-    return {
-      id: n.id,
-      label: iconPrefix + n.label + metaLine,
-      shape: 'box',
-      color: {
-        background: vis.bg,
-        border: vis.border,
-        highlight: { background: vis.border, border: vis.bg },
-        hover:     { background: vis.border, border: vis.bg },
-      },
-      font: { color: '#fff', face: 'sans-serif', size: n.type === 'JobRole' || n.type === 'KnowledgeArea' ? 16 : 13, multi: 'md' },
-      borderWidth: vis.locked ? 3 : 2,
-      shapeProperties: { borderRadius: 8, borderDashes: vis.locked ? [5, 4] : false },
-      margin: { top: 10, bottom: 10, left: 14, right: 14 },
-      shadow: { enabled: true, color: 'rgba(0,0,0,0.1)', size: 6, x: 1, y: 3 },
-      widthConstraint: { minimum: 120, maximum: 220 },
-      _rm: n,
-    };
-  });
-
-  const edges = data.edges.map((e, i) => ({
-    id: 'rme_' + i,
-    from: e.from,
-    to: e.to,
-    arrows: { to: { enabled: true, scaleFactor: 0.6, type: 'arrow' } },
-    color: { color: e.style === 'dashed' ? '#f87171' : '#94a3b8', highlight: '#4f46e5', hover: '#6366f1' },
-    dashes: e.style === 'dashed' ? [6, 4] : false,
-    width: e.style === 'dashed' ? 1.5 : 2,
-    smooth: { enabled: true, type: 'cubicBezier', roundness: 0.4 },
-  }));
-
-  if (rmNetwork) { rmNetwork.destroy(); rmNetwork = null; }
-  const treeEl = document.getElementById('rm-tree');
-  rmNetwork = new vis.Network(treeEl, {
-    nodes: new vis.DataSet(nodes),
-    edges: new vis.DataSet(edges),
-  }, {
-    layout: { hierarchical: { enabled: true, direction: 'UD', sortMethod: 'directed',
-      levelSeparation: 100, nodeSpacing: 160, treeSpacing: 200,
-      blockShifting: true, edgeMinimization: true, parentCentralization: true } },
-    physics: { enabled: false },
-    interaction: { hover: true, tooltipDelay: 100, navigationButtons: true,
-      keyboard: { enabled: true }, zoomView: true, dragView: true },
-    nodes: { shape: 'box', borderWidth: 2 },
-    edges: { smooth: { enabled: true, type: 'cubicBezier' } },
-  });
-
-  // Click node → hiện popover chi tiết CHẶNG đó (chỉ khi bấm vào node).
-  rmNetwork.on('click', (params) => {
-    document.querySelectorAll('.rm-popover').forEach(el => el.remove());
-    if (params.nodes.length !== 1) return;      // bấm nền trống → chỉ đóng popover
-    const nd = nodes.find(n => n.id === params.nodes[0]);
-    if (nd && nd._rm) showNodeDetail(nd._rm, params.pointer.DOM, treeEl, personalized);
-  });
-
-  renderPanel(data);
+  RM.showLinks = countPrereqEdges() > 0 && countPrereqEdges() <= 40;
+  renderHero();
+  renderToolbar();
+  renderTrack();
+  renderPanel();
+  requestAnimationFrame(drawLinks);
 }
 
-function showNodeDetail(n, domPos, treeEl, personalized) {
-  const isLeaf = n.type === 'Skill' || n.type === 'Knowledge';
-  const typeLabel = { JobRole: 'Vai trò', KnowledgeArea: 'Lĩnh vực', Skill: 'Kỹ năng', Knowledge: 'Kiến thức' }[n.type] || n.type;
-  const tv = RM_TYPE_STYLES[n.type] || RM_TYPE_STYLES.Skill;
+function countPrereqEdges() {
+  return (RM.data.edges || []).filter(e => e.style === 'dashed').length;
+}
 
-  let rows = '';
-  if (personalized && isLeaf && n.status) {
-    const stLabel = { done: 'Đã đạt', in_progress: 'Đang học', not_started: 'Chưa học' }[n.status];
-    const stCls = { done: 'st-done', in_progress: 'st-prog', not_started: 'st-todo' }[n.status];
-    const pct = (n.proficiency != null) ? ` · ${Math.round(n.proficiency * 100)}%` : '';
-    rows += `<div class="rm-pop-row"><span class="rm-pop-k">Trạng thái</span><span class="rm-badge ${stCls}">${stLabel}${pct}</span></div>`;
-  }
-  if (isLeaf && n.importance) {
-    const imp = IMP_BADGE[n.importance] || IMP_BADGE.optional;
-    rows += `<div class="rm-pop-row"><span class="rm-pop-k">Độ quan trọng</span><span class="rm-badge ${imp.cls}">${imp.star}${imp.label}</span></div>`;
-  }
-  if (isLeaf && n.difficulty) {
-    rows += `<div class="rm-pop-row"><span class="rm-pop-k">Độ khó</span><span class="rm-badge diff">${LEVEL_VI[n.difficulty] || n.difficulty}</span></div>`;
-  }
-  if (personalized && isLeaf) {
-    if (n.ready === false && n.status !== 'done') {
-      rows += `<div class="rm-pop-row"><span class="rm-pop-k">🔒 Cần học trước</span><span class="rm-pop-v">${escapeHtml((n.locked_by || []).join(', ') || '—')}</span></div>`;
-    } else if (n.status !== 'done') {
-      rows += `<div class="rm-pop-row"><span class="rm-pop-k">Sẵn sàng</span><span class="rm-badge ready">Bắt đầu được ngay</span></div>`;
+/* ---- Hero ---- */
+
+function renderHero() {
+  const d = RM.data, s = d.summary, pers = !!d.personalized;
+  const kindLabel = TYPE_VI[d.root.type] || d.root.type;
+
+  const who = pers
+    ? `<div class="rm-hero-who">👤 Học viên: ${escapeHtml(d.account.name)}</div>`
+    : '';
+
+  const ring = pers ? ringHtml(s.percent) : '';
+
+  const stats = pers
+    ? `<div class="rm-hero-stats">
+         <span class="rm-stat"><i class="done"></i><b>${s.done}</b> đã đạt</span>
+         <span class="rm-stat"><i class="prog"></i><b>${s.in_progress}</b> đang học</span>
+         <span class="rm-stat"><i class="todo"></i><b>${s.not_started}</b> chưa học</span>
+         <span class="rm-stat">Tổng <b>${s.total}</b> mục</span>
+       </div>`
+    : `<div class="rm-hero-stats"><span class="rm-stat">Lộ trình gồm <b>${s.total}</b> mục</span></div>`;
+
+  // Hoc vien khong co o chon nao de bam -> khong moc CTA nay ra.
+  const learner = RM.viewer.role === 'user';
+  const cta = (pers || learner) ? '' : `
+    <div class="rm-hero-cta">
+      Đây là <strong>bản chung</strong> — chưa biết bạn đang ở đâu.
+      Chọn một học viên để lộ trình tự đánh dấu đã đạt / đang học / còn thiếu.
+      <button type="button" id="rm-pick-acc">Chọn học viên</button>
+    </div>`;
+
+  // Xam toan bo co 2 nguyen nhan khac han nhau — phai noi ro la nguyen nhan nao.
+  let notice = '';
+  if (pers && s.done === 0 && s.in_progress === 0 && s.total > 0) {
+    const sc = d.account.skill_count;
+    if (sc === 0) {
+      notice = `<div class="rm-notice">Học viên <b>${escapeHtml(d.account.name)}</b> chưa có kỹ năng nào
+        được ghi nhận trong graph (không có quan hệ <code>HAS_SKILL</code>), nên mọi mục đều hiện “chưa học”.
+        Hãy chọn học viên khác — dropdown có ghi số kỹ năng của từng người.</div>`;
+    } else if (sc > 0) {
+      notice = `<div class="rm-notice">Học viên có <b>${sc} kỹ năng</b> trong hồ sơ, nhưng
+        <b>không kỹ năng nào thuộc lộ trình này</b> — nên toàn bộ vẫn là “chưa học”.
+        Thử một vai trò hoặc lĩnh vực khác.</div>`;
     }
   }
-  if (isLeaf) {
-    const r = n.resources || {};
-    const bits = [];
-    if (r.contents) bits.push(`📚 ${r.contents} học liệu`);
-    if (r.quizzes) bits.push(`📝 ${r.quizzes} quiz`);
-    if (r.mentors) bits.push(`🧑‍🏫 ${r.mentors} mentor`);
-    rows += `<div class="rm-pop-row"><span class="rm-pop-k">Tài nguyên</span><span class="rm-pop-v ${bits.length ? '' : 'muted'}">${bits.join(' · ') || 'Chưa có học liệu gắn kèm'}</span></div>`;
-  }
-  if (!rows) rows = `<div class="rm-pop-row"><span class="rm-pop-v muted">Điểm bắt đầu của lộ trình.</span></div>`;
 
-  const pop = document.createElement('div');
-  pop.className = 'rm-popover';
-  pop.style.left = Math.min(domPos.x + 16, treeEl.clientWidth - 280) + 'px';
-  pop.style.top = Math.max(domPos.y - 10, 8) + 'px';
-  pop.innerHTML =
-    `<button class="rm-pop-close" aria-label="Đóng">×</button>` +
-    `<span class="rm-pop-type" style="background:${tv.bg}">${typeLabel}</span>` +
-    `<h4>${escapeHtml(n.label)}</h4>` + rows;
-  treeEl.style.position = 'relative';
-  treeEl.appendChild(pop);
-  pop.querySelector('.rm-pop-close').addEventListener('click', (e) => { e.stopPropagation(); pop.remove(); });
+  $('rm-hero').innerHTML = `
+    <div class="rm-hero">
+      <div class="rm-hero-id">
+        <span class="rm-hero-kind">${escapeHtml(kindLabel)}</span>
+        <h3 class="rm-hero-name">${escapeHtml(d.root.name)}</h3>
+        ${who}
+        <div class="rm-hero-line">${escapeHtml(s.headline)}
+          ${s.sub ? `<div class="rm-hero-sub">${escapeHtml(s.sub)}</div>` : ''}
+        </div>
+        ${stats}
+        ${notice}
+      </div>
+      ${ring}
+      ${cta}
+    </div>`;
+
+  const pick = $('rm-pick-acc');
+  if (pick) pick.addEventListener('click', () => {
+    const sel = $('rm-account-sel');
+    sel.focus();
+    sel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
 }
 
-function renderPanel(data) {
-  const panel = document.getElementById('rm-panel');
-  const s = data.summary;
-  const personalized = !!data.personalized;
-  panel.style.display = 'block';
+function ringHtml(percent) {
+  const r = 44, c = 2 * Math.PI * r;
+  const offset = c * (1 - Math.max(0, Math.min(100, percent)) / 100);
+  return `
+    <div class="rm-ring" role="img" aria-label="Hoàn thành ${percent} phần trăm">
+      <svg width="104" height="104" viewBox="0 0 104 104">
+        <defs>
+          <linearGradient id="rmRingGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#22c55e"/>
+          </linearGradient>
+        </defs>
+        <circle class="rm-ring-track" cx="52" cy="52" r="${r}" fill="none" stroke-width="9"/>
+        <circle class="rm-ring-fill" cx="52" cy="52" r="${r}" fill="none" stroke-width="9"
+                stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${offset.toFixed(1)}"/>
+      </svg>
+      <div class="rm-ring-text"><span class="rm-ring-pct">${percent}%</span><span class="rm-ring-cap">HOÀN THÀNH</span></div>
+    </div>`;
+}
 
-  const rootName = escapeHtml(data.root.name);
-  const accLine = personalized
-    ? `<div class="rm-panel-who">👤 ${escapeHtml(data.account.name)} &nbsp;·&nbsp; 🎯 ${rootName}</div>`
-    : `<div class="rm-panel-who">🎯 ${rootName}</div>`;
+/* ---- Toolbar ---- */
 
-  // --- Progress block ---
-  let progressBlock = '';
-  if (personalized) {
-    progressBlock = `
-      <div class="rm-progress">
-        <div class="rm-progress-top">
-          <span class="rm-progress-pct">${s.percent}%</span>
-          <span class="rm-progress-count">${s.done}/${s.total} hoàn thành</span>
+function renderToolbar() {
+  const pers = !!RM.data.personalized;
+  const hasLinks = countPrereqEdges() > 0;
+
+  const chips = pers ? `
+    <button type="button" class="rm-chip" data-status="all" aria-pressed="true">Tất cả</button>
+    <button type="button" class="rm-chip" data-status="todo" aria-pressed="false">Cần làm</button>
+    <button type="button" class="rm-chip" data-status="prog" aria-pressed="false">Đang học</button>
+    <button type="button" class="rm-chip" data-status="done" aria-pressed="false">Đã đạt</button>` : '';
+
+  $('rm-toolbar').innerHTML = `
+    <div class="rm-tools">
+      <div class="rm-tools-left">
+        <input type="search" id="rm-q" class="rm-search" placeholder="Tìm trong lộ trình…" aria-label="Tìm trong lộ trình">
+        ${chips}
+        <button type="button" class="rm-chip" id="rm-ess" aria-pressed="false">⭐ Chỉ bắt buộc</button>
+      </div>
+      <div class="rm-tools-right">
+        <span class="rm-tools-note" id="rm-count"></span>
+        ${hasLinks ? `<button type="button" class="rm-tool-btn ${RM.showLinks ? 'is-on' : ''}" id="rm-links-btn"
+           aria-pressed="${RM.showLinks}"
+           title="Bật/tắt các đường nét đứt nối mục học trước với mục phụ thuộc">🔗 Đường tiên quyết</button>` : ''}
+        ${pers ? `<button type="button" class="rm-tool-btn" id="rm-here-btn"
+           title="Cuộn tới chặng bạn đang học dở">📍 Chặng hiện tại</button>` : ''}
+        <button type="button" class="rm-tool-btn" id="rm-fold-btn"
+          title="Thu gọn hoặc mở tất cả các chặng">Thu gọn hết</button>
+        <button type="button" class="rm-tool-btn" id="rm-copy-btn"
+          title="Chép URL của đúng lộ trình này để gửi cho người khác">🔗 Chép liên kết</button>
+      </div>
+    </div>
+    ${guideHtml(pers)}`;
+
+  wireGuide();
+
+  $('rm-q').addEventListener('input', debounce(e => {
+    RM.filters.q = deaccent(e.target.value.trim());
+    applyFilters();
+  }, 160));
+
+  $('rm-toolbar').querySelectorAll('.rm-chip[data-status]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      RM.filters.status = btn.dataset.status;
+      $('rm-toolbar').querySelectorAll('.rm-chip[data-status]').forEach(b =>
+        b.setAttribute('aria-pressed', String(b === btn)));
+      applyFilters();
+    });
+  });
+
+  $('rm-ess').addEventListener('click', () => {
+    RM.filters.essentialOnly = !RM.filters.essentialOnly;
+    $('rm-ess').setAttribute('aria-pressed', String(RM.filters.essentialOnly));
+    applyFilters();
+  });
+
+  const linkBtn = $('rm-links-btn');
+  if (linkBtn) linkBtn.addEventListener('click', () => {
+    RM.showLinks = !RM.showLinks;
+    linkBtn.classList.toggle('is-on', RM.showLinks);
+    linkBtn.setAttribute('aria-pressed', String(RM.showLinks));
+    drawLinks();
+  });
+
+  const hereBtn = $('rm-here-btn');
+  if (hereBtn) hereBtn.addEventListener('click', () => {
+    const key = RM.data.summary.current_group;
+    const el = key && document.querySelector(`.rm-stage[data-key="${CSS.escape(key)}"]`);
+    (el || document.querySelector('.rm-track')).scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+
+  $('rm-fold-btn').addEventListener('click', () => {
+    const stages = [...document.querySelectorAll('.rm-stage')];
+    const anyOpen = stages.some(s => s.getAttribute('aria-expanded') === 'true');
+    stages.forEach(s => {
+      if (anyOpen) RM.collapsed.add(s.dataset.key); else RM.collapsed.delete(s.dataset.key);
+    });
+    $('rm-fold-btn').textContent = anyOpen ? 'Mở hết' : 'Thu gọn hết';
+    applyFilters();
+  });
+
+  $('rm-copy-btn').addEventListener('click', async () => {
+    const btn = $('rm-copy-btn');
+    try {
+      await navigator.clipboard.writeText(location.href);
+      btn.textContent = '✓ Đã chép';
+    } catch {
+      btn.textContent = 'Ctrl+C để chép URL';
+    }
+    setTimeout(() => { btn.textContent = '🔗 Chép liên kết'; }, 2000);
+  });
+}
+
+/* ---- Huong dan doc lo trinh ----
+   Dung <details> de co san toggle + ban phim. Mo san lan dau, sau do nho lua chon
+   cua nguoi dung trong localStorage — huong dan khong nen lam phien mai. */
+
+const GUIDE_KEY = 'rm-guide-open';
+
+function guideHtml(personalized) {
+  const open = localStorage.getItem(GUIDE_KEY) !== '0';
+  const colors = personalized
+    ? `<li><span class="rm-gd-sw done"></span><b>Xanh</b> đã đạt ·
+        <span class="rm-gd-sw prog"></span><b>Cam</b> đang học ·
+        <span class="rm-gd-sw todo"></span><b>Xám</b> chưa học ·
+        <span class="rm-gd-sw lock"></span><b>Đỏ 🔒</b> chưa mở khoá vì còn thiếu mục phải học trước.</li>
+       <li>Dải <b>📍 BẠN ĐANG Ở ĐÂY</b> nằm ngay trước chặng bạn còn dang dở. Chặng nào xong 100% sẽ <b>tự thu gọn</b>.</li>`
+    : `<li>Đây là <b>bản chung</b> nên chưa có màu tiến độ. Chọn một học viên ở trên rồi bấm
+        <b>Tạo lộ trình</b> để mỗi ô tự đánh dấu đã đạt / đang học / chưa học.</li>`;
+
+  return `
+    <details class="rm-guide" id="rm-guide" ${open ? 'open' : ''}>
+      <summary>Đọc lộ trình này thế nào?</summary>
+      <ul>
+        <li><b>Đọc từ trên xuống.</b> Mỗi khối là một <b>chặng</b>; trong chặng là các mục cần học.
+            Cuối cùng là 🏁 vạch đích.</li>
+        ${colors}
+        <li><b>Nét đứt</b> nối hai ô nghĩa là phải xong ô đầu mới học được ô sau.
+            Rê chuột vào một ô để làm nổi chuỗi liên quan tới nó.</li>
+        <li><b>Bấm vào một ô</b> → cột bên phải hiện mô tả, cần học trước những gì, và nó mở khoá cho cái gì.</li>
+        <li><b>Bấm tên chặng</b> để thu gọn hoặc mở lại. Ô tìm kiếm gõ <b>không cần dấu</b> cũng ra.</li>
+      </ul>
+    </details>`;
+}
+
+function wireGuide() {
+  const g = $('rm-guide');
+  if (g) g.addEventListener('toggle', () => localStorage.setItem(GUIDE_KEY, g.open ? '1' : '0'));
+}
+
+/* ---- Track ---- */
+
+// Chang "nen tang" (tien quyet ngoai danh sach chinh) dua len dau, danh so 0.
+function orderedGroups() {
+  const gs = RM.data.groups || fallbackGroups();
+  return [...gs.filter(g => g.kind === 'support'), ...gs.filter(g => g.kind !== 'support')];
+}
+
+// Phong khi backend cu chua tra `groups`: gom tam theo do kho.
+function fallbackGroups() {
+  const by = new Map();
+  RM.data.nodes.filter(isLeaf).forEach(n => {
+    const k = n.difficulty || 'beginner';
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push(n.id);
+  });
+  return [...by.entries()].map(([k, ids]) => ({
+    key: k, label: levelVi(k), kind: 'level', node_ids: ids,
+    total: ids.length, done: 0, in_progress: 0, not_started: ids.length, percent: 0, current: false,
+  }));
+}
+
+function renderTrack() {
+  const pers = !!RM.data.personalized;
+  const groups = orderedGroups();
+  let idx = 0;
+  // Hai marker rieng vi mui ten khong ke thua duoc mau stroke cua path.
+  const arrow = (id, fill) =>
+    `<marker id="${id}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto">` +
+    `<path d="M0,1 L7,4 L0,7 z" fill="${fill}"/></marker>`;
+  const parts = [`<svg class="rm-links" aria-hidden="true"><defs>${arrow('rmArrow', '#cbd5e1')}${arrow('rmArrowHot', '#e11d48')}</defs></svg>`];
+
+  groups.forEach(g => {
+    if (g.current) parts.push('<div class="rm-here"><span>📍 BẠN ĐANG Ở ĐÂY</span></div>');
+    const support = g.kind === 'support';
+    const num = support ? '0' : String(++idx);
+    const complete = pers && g.total > 0 && g.done === g.total;
+    // Chang da xong thi thu gon san — bot nhieu, tap trung vao viec con lai.
+    if (complete) RM.collapsed.add(g.key);
+
+    const cls = ['rm-stage', complete ? 'is-complete' : '', g.current ? 'is-current' : ''].filter(Boolean).join(' ');
+    const bar = (pers && !support && g.total)
+      ? `<span class="rm-stage-bar"><i style="width:${g.percent}%"></i></span>
+         <span class="rm-stage-count">${g.done}/${g.total}</span>`
+      : `<span class="rm-stage-count">${g.total} mục</span>`;
+
+    const cards = g.node_ids.map(id => RM.byId.get(id)).filter(Boolean).map(cardHtml).join('');
+
+    parts.push(`
+      <section class="${cls}" data-key="${escapeHtml(g.key)}" aria-expanded="true">
+        <button type="button" class="rm-stage-head" aria-controls="rm-body-${escapeHtml(g.key)}">
+          <span class="rm-stage-idx">${complete ? '✓' : num}</span>
+          <span class="rm-stage-name">${escapeHtml(g.label)}</span>
+          ${support ? '<span class="rm-stage-kind">bổ trợ</span>' : ''}
+          ${bar}
+          <span class="rm-stage-caret" aria-hidden="true"></span>
+        </button>
+        <div class="rm-stage-body" id="rm-body-${escapeHtml(g.key)}">
+          ${cards ? `<div class="rm-cards">${cards}</div>` : '<div class="rm-stage-empty">Chặng này chưa có mục nào.</div>'}
         </div>
-        <div class="rm-progress-bar"><div class="rm-progress-fill" style="width:${s.percent}%"></div></div>
-        <div class="rm-dist">
-          <span class="rm-dist-item"><i class="rm-swatch done"></i>${s.done} đã đạt</span>
-          <span class="rm-dist-item"><i class="rm-swatch prog"></i>${s.in_progress} đang học</span>
-          <span class="rm-dist-item"><i class="rm-swatch todo"></i>${s.not_started} chưa học</span>
-        </div>
-      </div>`;
+      </section>`);
+  });
+
+  parts.push(finishHtml());
+  parts.push('<div class="rm-nomatch" hidden id="rm-nomatch">Không có mục nào khớp bộ lọc. Thử xoá từ khoá hoặc chọn “Tất cả”.</div>');
+
+  const canvas = $('rm-canvas');
+  canvas.innerHTML = `<div class="rm-track" id="rm-track">${parts.join('')}</div>`;
+  wireTrack(canvas.querySelector('#rm-track'));
+  applyFilters();
+}
+
+function finishHtml() {
+  const d = RM.data, s = d.summary;
+  if (d.personalized && s.total > 0 && s.done === s.total) {
+    return `<div class="rm-finish is-reached"><span class="rm-finish-idx">🏁</span>
+      Bạn đã hoàn thành toàn bộ lộ trình <strong>${escapeHtml(d.root.name)}</strong>.</div>`;
   }
+  const left = d.personalized ? s.total - s.done : s.total;
+  return `<div class="rm-finish"><span class="rm-finish-idx">🏁</span>
+    Đích đến: làm chủ <strong>${escapeHtml(d.root.name)}</strong> — còn ${left} mục nữa.</div>`;
+}
 
-  // --- Headline ---
-  const headline = `<div class="rm-headline">${escapeHtml(s.headline)}${s.sub ? `<div class="rm-headline-sub">${escapeHtml(s.sub)}</div>` : ''}</div>`;
+function cardHtml(n) {
+  const pers = !!RM.data.personalized;
+  const status = pers ? (n.status || 'not_started') : null;
+  const locked = pers && n.ready === false && status !== 'done';
+  const cls = ['rm-card', pers ? STATUS_CLASS[status] : 'is-todo', locked ? 'is-locked' : ''].filter(Boolean).join(' ');
+  const icon = locked ? '🔒' : (pers ? (STATUS_ICON[status] || '') : '');
 
-  // --- Milestones ---
-  let milestonesBlock = '';
-  if (personalized && s.milestones.length) {
-    const rows = s.milestones.map(m => `
-      <div class="rm-ms">
-        <div class="rm-ms-head"><span>${LEVEL_VI[m.level] || m.level}</span><span>${m.done}/${m.total}</span></div>
-        <div class="rm-ms-bar"><div class="rm-ms-fill ${m.percent === 100 ? 'full' : ''}" style="width:${m.percent}%"></div></div>
-      </div>`).join('');
-    milestonesBlock = `<div class="rm-section"><h4>🏁 Chặng theo cấp độ</h4>${rows}</div>`;
+  const imp = IMP_BADGE[n.importance] || IMP_BADGE.optional;
+  const tags = [`<span class="rm-badge ${imp.cls}">${imp.star}${imp.label}</span>`];
+  if (n.type === 'Knowledge' && n.kind) tags.push(`<span class="rm-badge kind">${escapeHtml(n.kind)}</span>`);
+
+  const prof = (pers && n.proficiency != null && n.proficiency > 0)
+    ? `<span class="rm-card-bar"><i style="width:${Math.round(n.proficiency * 100)}%"></i></span>` : '';
+
+  const lock = locked && (n.locked_by || []).length
+    ? `<span class="rm-card-lock">🔒 Cần trước: ${escapeHtml(n.locked_by.slice(0, 2).join(', '))}${n.locked_by.length > 2 ? ` +${n.locked_by.length - 2}` : ''}</span>`
+    : '';
+
+  const r = n.resources || {};
+  const bits = [];
+  if (r.contents) bits.push(`📚 ${r.contents}`);
+  if (r.quizzes) bits.push(`📝 ${r.quizzes}`);
+  if (r.mentors) bits.push(`🎓 ${r.mentors}`);
+  const res = bits.length ? `<span class="rm-card-res">${bits.join(' · ')}</span>` : '';
+
+  const sub = [TYPE_VI[n.type] || n.type, n.difficulty ? levelVi(n.difficulty) : ''].filter(Boolean).join(' · ');
+
+  return `
+    <button type="button" class="${cls}" data-node="${escapeHtml(n.id)}" data-ref="${escapeHtml(n.ref_id || '')}">
+      <span class="rm-card-ico" aria-hidden="true">${icon}</span>
+      <span class="rm-card-main">
+        <span class="rm-card-title">${escapeHtml(n.label)}</span>
+        <span class="rm-card-sub">${escapeHtml(sub)}</span>
+        ${prof}
+        <span class="rm-card-tags">${tags.join('')}</span>
+        ${lock}
+        ${res}
+      </span>
+    </button>`;
+}
+
+function wireTrack(track) {
+  track.addEventListener('click', e => {
+    const head = e.target.closest('.rm-stage-head');
+    if (head) {
+      const stage = head.closest('.rm-stage');
+      const key = stage.dataset.key;
+      if (RM.collapsed.has(key)) RM.collapsed.delete(key); else RM.collapsed.add(key);
+      applyFilters();
+      return;
+    }
+    const card = e.target.closest('.rm-card');
+    if (card) selectNode(card.dataset.node);
+  });
+
+  // Hover / focus lam noi chuoi tien quyet lien quan.
+  track.addEventListener('mouseover', e => {
+    const card = e.target.closest('.rm-card');
+    if (card) setFocus(card.dataset.node);
+  });
+  track.addEventListener('mouseout', e => {
+    if (e.target.closest('.rm-card')) setFocus(RM.selected);
+  });
+  track.addEventListener('focusin', e => {
+    const card = e.target.closest('.rm-card');
+    if (card) setFocus(card.dataset.node);
+  });
+}
+
+/* ---- loc + dem ---- */
+
+function filterActive() {
+  const f = RM.filters;
+  return !!f.q || f.status !== 'all' || f.essentialOnly;
+}
+
+function nodeMatches(n) {
+  const f = RM.filters;
+  if (f.essentialOnly && n.importance !== 'essential') return false;
+  if (f.status === 'done' && n.status !== 'done') return false;
+  if (f.status === 'prog' && n.status !== 'in_progress') return false;
+  if (f.status === 'todo' && n.status === 'done') return false;
+  if (f.q) {
+    const hay = deaccent(`${n.label} ${n.meta || ''} ${n.description || ''} ${n.kind || ''}`);
+    if (!hay.includes(f.q)) return false;
   }
+  return true;
+}
 
-  // --- Next steps ---
-  const stepsTitle = personalized ? '▶ Học tiếp theo' : '⭐ Mục quan trọng nhất';
-  let stepsBlock = '';
+function applyFilters() {
+  const track = $('rm-track');
+  if (!track) return;
+  const active = filterActive();
+  let shown = 0;
+
+  track.querySelectorAll('.rm-stage').forEach(stage => {
+    let visible = 0;
+    stage.querySelectorAll('.rm-card').forEach(card => {
+      const n = RM.byId.get(card.dataset.node);
+      const ok = !n || nodeMatches(n);
+      card.hidden = !ok;
+      if (ok) visible++;
+    });
+    shown += visible;
+    stage.hidden = active && visible === 0;
+    // Khi dang loc thi mo het chang co ket qua, khoi phai bam tung cai.
+    const expanded = active ? true : !RM.collapsed.has(stage.dataset.key);
+    stage.setAttribute('aria-expanded', String(expanded));
+    stage.querySelector('.rm-stage-head').setAttribute('aria-expanded', String(expanded));
+    stage.querySelector('.rm-stage-body').hidden = !expanded;
+  });
+
+  const marker = track.querySelector('.rm-here');
+  if (marker) marker.hidden = active;
+  const finish = track.querySelector('.rm-finish');
+  if (finish) finish.hidden = active;
+  const none = $('rm-nomatch');
+  if (none) none.hidden = shown > 0;
+
+  const count = $('rm-count');
+  if (count) count.textContent = active ? `Hiện ${shown}/${RM.data.summary.total} mục` : '';
+
+  drawLinks();
+}
+
+/* ---- duong tien quyet (SVG) ---- */
+
+function drawLinks() {
+  const track = $('rm-track');
+  if (!track) return;
+  const svg = track.querySelector('.rm-links');
+  if (!svg) return;
+  [...svg.querySelectorAll('path.rm-link')].forEach(p => p.remove());
+  if (!RM.showLinks) return;
+
+  const base = track.getBoundingClientRect();
+  const shown = el => el && el.offsetParent !== null;
+
+  (RM.data.edges || []).filter(e => e.style === 'dashed').forEach(e => {
+    const a = track.querySelector(`.rm-card[data-node="${CSS.escape(e.from)}"]`);
+    const b = track.querySelector(`.rm-card[data-node="${CSS.escape(e.to)}"]`);
+    if (!shown(a) || !shown(b)) return;
+
+    const ar = a.getBoundingClientRect(), br = b.getBoundingClientRect();
+    const ax = ar.left - base.left, ay = ar.top - base.top;
+    const bx = br.left - base.left, by = br.top - base.top;
+    let d;
+    if (br.top - ar.bottom > 12) {
+      // muc phu thuoc nam duoi: day A -> dinh B
+      const x1 = ax + ar.width / 2, y1 = ay + ar.height;
+      const x2 = bx + br.width / 2, y2 = by;
+      const k = Math.max(22, (y2 - y1) * 0.45);
+      d = `M${x1},${y1} C${x1},${y1 + k} ${x2},${y2 - k} ${x2},${y2}`;
+    } else {
+      // cung hang hoac nam tren: di canh ben
+      const right = br.left >= ar.left;
+      const x1 = right ? ax + ar.width : ax;
+      const x2 = right ? bx : bx + br.width;
+      const y1 = ay + ar.height / 2, y2 = by + br.height / 2;
+      const k = Math.max(26, Math.abs(x2 - x1) * 0.5) * (right ? 1 : -1);
+      d = `M${x1},${y1} C${x1 + k},${y1} ${x2 - k},${y2} ${x2},${y2}`;
+    }
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('class', 'rm-link');
+    p.setAttribute('d', d);
+    p.setAttribute('marker-end', 'url(#rmArrow)');
+    p.dataset.from = e.from;
+    p.dataset.to = e.to;
+    svg.appendChild(p);
+  });
+
+  if (RM.selected) setFocus(RM.selected);
+}
+
+function setFocus(nodeId) {
+  const track = $('rm-track');
+  if (!track) return;
+  track.classList.toggle('is-focused', !!nodeId);
+  const hot = new Set(nodeId
+    ? [nodeId, ...(RM.prereqOf.get(nodeId) || []), ...(RM.unlocks.get(nodeId) || [])]
+    : []);
+  track.querySelectorAll('.rm-card').forEach(c => c.classList.toggle('is-hot', hot.has(c.dataset.node)));
+  track.querySelectorAll('path.rm-link').forEach(p => {
+    const on = p.dataset.from === nodeId || p.dataset.to === nodeId;
+    p.classList.toggle('is-hot', on);
+    p.setAttribute('marker-end', on ? 'url(#rmArrowHot)' : 'url(#rmArrow)');
+  });
+}
+
+/* ---- chon 1 muc ---- */
+
+function selectNode(nodeId) {
+  const n = RM.byId.get(nodeId);
+  if (!n) return;
+  RM.selected = RM.selected === nodeId ? null : nodeId;
+  document.querySelectorAll('.rm-card').forEach(c =>
+    c.classList.toggle('is-sel', c.dataset.node === RM.selected));
+  setFocus(RM.selected);
+  renderPanel();
+}
+
+function focusNodeCard(nodeId) {
+  const card = document.querySelector(`.rm-card[data-node="${CSS.escape(nodeId)}"]`);
+  if (!card) return;
+  const stage = card.closest('.rm-stage');
+  if (stage && stage.getAttribute('aria-expanded') === 'false') {
+    RM.collapsed.delete(stage.dataset.key);
+    applyFilters();
+  }
+  card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  card.classList.remove('rm-card-flash');
+  void card.offsetWidth;              // ep trinh duyet chay lai animation
+  card.classList.add('rm-card-flash');
+  card.focus({ preventScroll: true });
+}
+
+/* ---- Panel ben phai ---- */
+
+function renderPanel() {
+  const panel = $('rm-panel');
+  panel.hidden = false;
+  if (RM.selected && RM.byId.has(RM.selected)) renderPanelDetail(panel, RM.byId.get(RM.selected));
+  else renderPanelOverview(panel);
+}
+
+function renderPanelOverview(panel) {
+  const d = RM.data, s = d.summary, pers = !!d.personalized;
+
+  const title = pers ? '📌 Học tiếp theo' : '⭐ Nên bắt đầu từ đây';
+  let steps;
   if (s.next_steps.length) {
-    const cards = s.next_steps.map((it, idx) => {
+    steps = s.next_steps.map((it, i) => {
       const imp = IMP_BADGE[it.importance] || IMP_BADGE.optional;
-      const readyBadge = personalized
+      const flag = pers
         ? (it.status === 'in_progress'
             ? '<span class="rm-badge ready">Đang học dở</span>'
-            : (it.ready ? '<span class="rm-badge ready">Sẵn sàng</span>' : '<span class="rm-badge locked">🔒 Chưa mở khóa</span>'))
+            : (it.ready ? '<span class="rm-badge ready">Sẵn sàng</span>' : '<span class="rm-badge locked">🔒 Chưa mở khoá</span>'))
         : '';
-      const res = it.resources || {};
-      const resBits = [];
-      if (res.contents) resBits.push(`📚 ${res.contents} học liệu`);
-      if (res.quizzes) resBits.push(`📝 ${res.quizzes} quiz`);
-      if (res.mentors) resBits.push(`🧑‍🏫 ${res.mentors} mentor`);
-      const resLine = resBits.length ? `<div class="rm-step-res">${resBits.join(' · ')}</div>` : '<div class="rm-step-res muted">Chưa có học liệu gắn kèm</div>';
       return `
-        <div class="rm-step" id="rm-step-${escapeHtml(it.ref_id)}">
-          <div class="rm-step-num">${idx + 1}</div>
-          <div class="rm-step-body">
-            <div class="rm-step-title">${escapeHtml(it.name)}
+        <button type="button" class="rm-step" data-ref="${escapeHtml(it.ref_id)}">
+          <span class="rm-step-num">${i + 1}</span>
+          <span class="rm-step-body">
+            <span class="rm-step-title">${escapeHtml(it.name)}
               <span class="rm-type-tag ${it.type === 'Skill' ? 'skill' : 'know'}">${it.type === 'Skill' ? 'Kỹ năng' : 'Kiến thức'}</span>
-            </div>
-            <div class="rm-step-badges">
+            </span>
+            <span class="rm-step-badges">
               <span class="rm-badge ${imp.cls}">${imp.star}${imp.label}</span>
-              ${readyBadge}
-              ${it.difficulty ? `<span class="rm-badge diff">${LEVEL_VI[it.difficulty] || it.difficulty}</span>` : ''}
-            </div>
-            <div class="rm-step-why">${escapeHtml(it.why)}</div>
-            ${resLine}
-          </div>
-        </div>`;
+              ${flag}
+              ${it.difficulty ? `<span class="rm-badge diff">${escapeHtml(levelVi(it.difficulty))}</span>` : ''}
+            </span>
+            <span class="rm-step-why">${escapeHtml(it.why)}</span>
+          </span>
+        </button>`;
     }).join('');
-    stepsBlock = `<div class="rm-section"><h4>${stepsTitle}</h4>${cards}</div>`;
-  } else if (personalized) {
-    stepsBlock = `<div class="rm-section"><div class="rm-all-done">🎉 Không còn mục nào cần học — bạn đã hoàn thành hết!</div></div>`;
+  } else {
+    steps = '<div class="rm-all-done">🎉 Không còn mục nào cần học — đã hoàn thành hết!</div>';
   }
 
-  panel.innerHTML = accLine + progressBlock + headline + stepsBlock + milestonesBlock;
+  const nav = orderedGroups().map(g =>
+    `<button type="button" class="rm-linkbtn" data-stage="${escapeHtml(g.key)}">${escapeHtml(g.label)}${
+      pers && g.kind !== 'support' && g.total ? ` <span style="opacity:.6">${g.done}/${g.total}</span>` : ''}</button>`
+  ).join('');
+
+  panel.innerHTML = `
+    <div class="rm-panel-who">${pers ? '👤 ' + escapeHtml(d.account.name) + ' · ' : ''}🎯 ${escapeHtml(d.root.name)}</div>
+    <div class="rm-section"><h4>${title}</h4>${steps}</div>
+    <div class="rm-section"><h4>🧭 Đi tới chặng</h4><div>${nav}</div></div>`;
+
+  panel.querySelectorAll('.rm-step').forEach(btn => btn.addEventListener('click', () => {
+    const node = RM.byRef.get(btn.dataset.ref);
+    if (node) focusNodeCard(node.id);
+  }));
+  panel.querySelectorAll('.rm-linkbtn[data-stage]').forEach(btn => btn.addEventListener('click', () => {
+    const stage = document.querySelector(`.rm-stage[data-key="${CSS.escape(btn.dataset.stage)}"]`);
+    if (!stage) return;
+    RM.collapsed.delete(btn.dataset.stage);
+    applyFilters();
+    stage.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }));
 }
 
-async function generate(kind) {
-  const accId = document.getElementById('rm-account-sel').value;
-  const selId = kind === 'role' ? 'rm-role-sel' : 'rm-area-sel';
-  const v = document.getElementById(selId).value;
-  if (!v) { alert(kind === 'role' ? 'Chọn JobRole trước.' : 'Chọn KnowledgeArea trước.'); return; }
-  document.getElementById('rm-canvas').innerHTML = '<div style="padding:40px;text-align:center;color:#64748b;font-size:16px">Đang tạo roadmap...</div>';
-  document.getElementById('rm-panel').style.display = 'none';
-  const qs = accId ? `?account_id=${encodeURIComponent(accId)}` : '';
-  try {
-    const r = await fetch(`/api/roadmap/by-${kind}/${encodeURIComponent(v)}${qs}`);
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    renderRoadmap(await r.json());
-  } catch (e) {
-    document.getElementById('rm-canvas').innerHTML = `<div style="padding:40px;text-align:center;color:#ef4444">Lỗi: ${e.message}</div>`;
+function renderPanelDetail(panel, n) {
+  const pers = !!RM.data.personalized;
+  const status = n.status || 'not_started';
+  const locked = pers && n.ready === false && status !== 'done';
+
+  const badges = [];
+  if (pers) {
+    const cls = { done: 'st-done', in_progress: 'st-prog', not_started: 'st-todo' }[status];
+    const pct = n.proficiency != null ? ` · ${Math.round(n.proficiency * 100)}%` : '';
+    badges.push(`<span class="rm-badge ${cls}">${escapeHtml(RM.data.summary.status_label[status])}${pct}</span>`);
   }
+  if (n.importance) {
+    const imp = IMP_BADGE[n.importance] || IMP_BADGE.optional;
+    badges.push(`<span class="rm-badge ${imp.cls}">${imp.star}${imp.label}</span>`);
+  }
+  if (n.difficulty) badges.push(`<span class="rm-badge diff">${escapeHtml(levelVi(n.difficulty))}</span>`);
+  if (pers && !locked && status !== 'done') badges.push('<span class="rm-badge ready">Bắt đầu được ngay</span>');
+  if (locked) badges.push('<span class="rm-badge locked">🔒 Chưa mở khoá</span>');
+
+  const desc = n.description
+    ? `<div class="rm-detail-desc">${escapeHtml(n.description)}</div>`
+    : `<div class="rm-detail-desc muted">Mục này chưa có mô tả trong graph.</div>`;
+
+  const chips = ids => (ids || []).map(id => {
+    const t = RM.byId.get(id);
+    if (!t) return '';
+    const bad = pers && t.status && t.status !== 'done';
+    return `<button type="button" class="rm-linkbtn ${bad ? 'locked' : ''}" data-goto="${escapeHtml(id)}">${escapeHtml(t.label)}</button>`;
+  }).join('');
+
+  const prereqs = chips(RM.prereqOf.get(n.id));
+  const unlocks = chips(RM.unlocks.get(n.id));
+
+  const r = n.resources || {};
+  const bits = [];
+  if (r.contents) bits.push(`📚 ${r.contents} học liệu`);
+  if (r.quizzes) bits.push(`📝 ${r.quizzes} quiz`);
+  if (r.mentors) bits.push(`🎓 ${r.mentors} mentor`);
+  // Content chi COVERS Knowledge nen Skill khong bao gio co hoc lieu — noi ro thay vi de trong.
+  const resFallback = n.type === 'Skill'
+    ? 'Chưa có quiz hoặc mentor gắn kèm (học liệu chỉ gắn vào Kiến thức).'
+    : 'Chưa có học liệu gắn kèm.';
+
+  panel.innerHTML = `
+    <button type="button" class="rm-back" id="rm-back">← Quay lại tổng quan</button>
+    <h3 class="rm-detail-title">${escapeHtml(n.label)}</h3>
+    <div class="rm-detail-kind">${escapeHtml(TYPE_VI[n.type] || n.type)}${n.kind ? ' · ' + escapeHtml(n.kind) : ''}</div>
+    <div class="rm-detail-badges">${badges.join('')}</div>
+    ${desc}
+    ${prereqs ? `<div class="rm-detail-row"><span class="rm-detail-k">Cần học trước</span><span class="rm-detail-v">${prereqs}</span></div>` : ''}
+    ${unlocks ? `<div class="rm-detail-row"><span class="rm-detail-k">Mở khoá cho</span><span class="rm-detail-v">${unlocks}</span></div>` : ''}
+    <div class="rm-detail-row"><span class="rm-detail-k">Tài nguyên</span>
+      <span class="rm-detail-v ${bits.length ? '' : 'muted'}">${bits.length ? bits.join(' · ') : resFallback}</span></div>`;
+
+  $('rm-back').addEventListener('click', () => selectNode(n.id));
+  panel.querySelectorAll('.rm-linkbtn[data-goto]').forEach(btn => btn.addEventListener('click', () => {
+    focusNodeCard(btn.dataset.goto);
+    selectNode(btn.dataset.goto);
+  }));
 }
 
-document.getElementById('rm-gen-role').addEventListener('click', () => generate('role'));
-document.getElementById('rm-gen-area').addEventListener('click', () => generate('area'));
+/* ---------------------------------------------------------------- wiring */
+
+$('rm-gen').addEventListener('click', generate);
+$('rm-kind-sel').addEventListener('change', () => { syncKindUI(); setHint(''); });
+[$('rm-role-sel'), $('rm-area-sel'), $('rm-account-sel')].forEach(sel =>
+  sel.addEventListener('change', () => setHint('')));
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && RM.selected) selectNode(RM.selected);
+});
+
+window.addEventListener('resize', debounce(drawLinks, 140));
+
+// Mo thang tab Roadmap khi vao bang deep-link (doi qua man hinh dang nhap neu can).
+(function autoOpenFromLink() {
+  if (!new URLSearchParams(location.search).get('rm_id')) return;
+  const btn = document.querySelector('.tab[data-tab="roadmap"]');
+  const overlay = $('login-overlay');
+  if (!btn) return;
+  const open = () => { if (!btn.classList.contains('active')) btn.click(); };
+  if (!overlay || overlay.style.display === 'none') { open(); return; }
+  const obs = new MutationObserver(() => {
+    if (overlay.style.display === 'none') { obs.disconnect(); open(); }
+  });
+  obs.observe(overlay, { attributes: true, attributeFilter: ['style'] });
+})();
 
 export { loadRoadmapSources };

@@ -87,6 +87,14 @@ async def _no_cache_static(request: Request, call_next):
 
 # Endpoint mở (không cần đăng nhập): trang login gọi được lúc chưa có phiên.
 _AUTH_OPEN = {"/api/auth/login", "/api/auth/me", "/api/health"}
+# Học viên (role 'user') CHỈ được gọi đúng những path này. Mọi /api/* khác → 403.
+# Đây là allowlist chứ không phải blocklist: thêm router mới thì mặc định học viên
+# KHÔNG với tới được, phải chủ động mở ở đây. An toàn hơn là quên chặn.
+_USER_ALLOWED = (
+    "/api/roadmap/",
+    "/api/auth/me", "/api/auth/logout", "/api/auth/change-password",
+    "/api/health",
+)
 # (method, path-prefix) chỉ ADMIN được gọi — chặn chuyên gia ghi thẳng, bỏ qua duyệt.
 _ADMIN_ONLY = (
     ("POST", "/api/option1"), ("POST", "/api/option2"),
@@ -105,6 +113,11 @@ async def _auth_gate(request: Request, call_next):
         user = get_current_user(request)
         if not user:
             return JSONResponse({"detail": "Cần đăng nhập"}, status_code=401)
+        if user.get("role") == "user" and not any(path.startswith(p) for p in _USER_ALLOWED):
+            return JSONResponse(
+                {"detail": "Tài khoản học viên chỉ xem được lộ trình của mình"},
+                status_code=403,
+            )
         for m, p in _ADMIN_ONLY:
             if request.method == m and path.startswith(p) and user.get("role") != "admin":
                 return JSONResponse({"detail": "Chỉ admin được thao tác này"}, status_code=403)

@@ -29,6 +29,8 @@ export async function fetchIdentity() {
 
 export function isExpert() { return IDENTITY.role === 'expert'; }
 export function isAdmin() { return IDENTITY.role === 'admin'; }
+// Hoc vien: chi thay tab Roadmap, chi xem duoc ho so cua chinh minh.
+export function isLearner() { return IDENTITY.role === 'user'; }
 export function isLoggedIn() { return !!IDENTITY.role; }
 
 // ---- Giỏ "lô đề xuất" của chuyên gia: gom nhiều thay đổi rồi gửi 1 lần ----

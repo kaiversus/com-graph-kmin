@@ -20,6 +20,7 @@ class NewUserIn(BaseModel):
     name: str
     password: str
     role: str = "expert"
+    account_id: str | None = None      # bắt buộc khi role = 'user'
 
 
 class PasswordIn(BaseModel):
@@ -65,7 +66,7 @@ def list_users(role: str | None = None, _admin: dict = Depends(auth.require_admi
 
 @router.post("/users")
 def create_user(body: NewUserIn, _admin: dict = Depends(auth.require_admin)):
-    return auth.create_user(body.email, body.name, body.password, body.role)
+    return auth.create_user(body.email, body.name, body.password, body.role, body.account_id)
 
 
 @router.delete("/users/{email}")

@@ -10,16 +10,48 @@ Khác bản cũ (chỉ vẽ cây tĩnh), bản này overlay hồ sơ của 1 Acc
   - "Học ở đâu, chứng minh sao": resources = số Content/Quiz/Mentor gắn vào.
   - Tiến độ %, "Học tiếp theo", milestone, câu headline tạo động lực → gói trong `summary`.
 
-Cả by-role và by-area quy về cùng cấu trúc { root, account, nodes, edges, summary }.
+Cả by-role và by-area quy về cùng cấu trúc { root, account, nodes, edges, groups, summary }.
 Node vẫn giữ id/label/type/level/meta để FE vẽ cây; kèm thêm status/importance/... để
 FE tô màu và dựng panel bên phải. account_id là query param TÙY CHỌN — bỏ trống thì
 roadmap về chế độ "bản chung" (không có tiến độ cá nhân).
+
+`groups` là các CHẶNG của lộ trình — FE dựng track từ đây thay vì tự suy từ edges:
+  - by-role: mỗi cấp độ khó là 1 chặng (beginner→expert), cộng chặng "support" cuối
+    chứa các tiên quyết không nằm trong danh sách skill của vai trò.
+  - by-area: mỗi lĩnh vực con là 1 chặng, chặng đầu là knowledge thuộc thẳng area gốc.
+
+Quy ước cạnh nét đứt (`style: "dashed"`): LUÔN là `from` = tiên quyết, `to` = mục phụ
+thuộc. Cả hai chế độ tuân theo quy ước này để FE vẽ mũi tên một chiều nhất quán.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from app.config import get_driver, NEO4J_DATABASE
+from app.services import auth
 
 router = APIRouter(prefix="/api", tags=["roadmap"])
+
+
+def _viewer(request: Request) -> dict:
+    """Ai đang xem + họ được phép xem hồ sơ nào.
+
+    Với role 'user' (học viên), `account_id` LUÔN lấy từ AppUser.account_id trong DB,
+    không bao giờ lấy từ query param — nếu không họ chỉ cần sửa URL là xem được hồ sơ
+    người khác.
+    """
+    u = auth.get_current_user(request) or {}
+    role = u.get("role")
+    return {
+        "role": role,
+        "email": u.get("email"),
+        "locked_account": auth.account_id_of(u.get("email")) if role == "user" else None,
+    }
+
+
+def _effective_account(viewer: dict, account_id: str | None) -> str | None:
+    """account_id thực sự được dùng để truy vấn tiến độ."""
+    if viewer["role"] == "user":
+        return viewer["locked_account"]      # bỏ qua hoàn toàn giá trị client gửi lên
+    return account_id
 
 SKILL_LEVELS = ["beginner", "intermediate", "advanced", "expert"]
 _LEVEL_RANK = {lvl: i for i, lvl in enumerate(SKILL_LEVELS)}
@@ -60,11 +92,54 @@ STATUS_LABEL = {
     "in_progress": "Đang học",
     "not_started": "Chưa học",
 }
+# Nhãn cấp độ khó. Trả kèm trong summary để FE dùng lại, khỏi giữ bản sao thứ hai.
+LEVEL_LABEL = {
+    "beginner": "Cơ bản",
+    "intermediate": "Trung cấp",
+    "advanced": "Nâng cao",
+    "expert": "Chuyên sâu",
+}
+
+
+def _make_group(key, label, kind, node_ids, status_by_id, personalized):
+    """Gom 1 chặng + đếm tiến độ của chặng đó."""
+    done = in_progress = 0
+    if personalized:
+        for nid in node_ids:
+            st = status_by_id.get(nid)
+            if st == "done":
+                done += 1
+            elif st == "in_progress":
+                in_progress += 1
+    total = len(node_ids)
+    return {
+        "key": key, "label": label, "kind": kind, "node_ids": node_ids,
+        "total": total, "done": done, "in_progress": in_progress,
+        "not_started": total - done - in_progress,
+        "percent": round(done / total * 100) if total else 0,
+    }
+
+
+def _mark_current(groups, personalized):
+    """Chặng "bạn đang ở đây" = chặng tính tiến độ đầu tiên chưa xong. Trả về key."""
+    for g in groups:
+        g["current"] = False
+    if not personalized:
+        return None
+    for g in groups:
+        if g["kind"] != "support" and g["total"] and g["done"] < g["total"]:
+            g["current"] = True
+            return g["key"]
+    return None
 
 
 @router.get("/roadmap/sources")
-def roadmap_sources():
-    """Điểm bắt đầu roadmap: job roles, knowledge areas, và accounts (để cá nhân hóa)."""
+def roadmap_sources(request: Request):
+    """Điểm bắt đầu roadmap: job roles, knowledge areas, và accounts (để cá nhân hóa).
+
+    Học viên chỉ nhận về đúng account của mình — danh sách học viên khác không rời server.
+    """
+    viewer = _viewer(request)
     driver = get_driver()
     with driver.session(database=NEO4J_DATABASE) as session:
         roles = session.run(
@@ -73,11 +148,24 @@ def roadmap_sources():
         areas = session.run(
             "MATCH (a:KnowledgeArea) RETURN a.id AS id, a.name AS name ORDER BY name"
         ).data()
-        accounts = session.run(
-            "MATCH (a:Account) RETURN a.id_account AS id "
-            "ORDER BY a.id_account"
-        ).data()
-    return {"roles": roles, "areas": areas, "accounts": accounts}
+        # Kem so ky nang da ghi nhan, va day account CO du lieu len dau danh sach.
+        # Truoc day sap theo id nen account rong hay nam tren cung -> nguoi dung chon
+        # phai no thi ca lo trinh xam het ma khong hieu vi sao.
+        if viewer["role"] == "user":
+            accounts = session.run(
+                "MATCH (a:Account {id_account: $aid}) "
+                "OPTIONAL MATCH (a)-[h:HAS_SKILL]->(:Skill) "
+                "RETURN a.id_account AS id, count(h) AS skill_count",
+                aid=viewer["locked_account"],
+            ).data()
+        else:
+            accounts = session.run(
+                "MATCH (a:Account) "
+                "OPTIONAL MATCH (a)-[h:HAS_SKILL]->(:Skill) "
+                "RETURN a.id_account AS id, count(h) AS skill_count "
+                "ORDER BY skill_count DESC, a.id_account"
+            ).data()
+    return {"roles": roles, "areas": areas, "accounts": accounts, "viewer": viewer}
 
 
 def _account_skill_map(session, account_id: str | None) -> dict:
@@ -125,18 +213,24 @@ def _knowledge_resources(session, knowledge_ids: list) -> dict:
 def _account_name(session, account_id: str | None):
     if not account_id:
         return None
+    # skill_count = tong so HAS_SKILL cua account TREN TOAN GRAPH (khong gioi han lo trinh
+    # nay). FE dung no de phan biet "hoc vien chua co du lieu" voi "co du lieu nhung khong
+    # dinh gi toi lo trinh dang xem" — hai truong hop nay nhin giong het nhau: xam toan bo.
     rec = session.run(
-        "MATCH (a:Account {id_account: $aid}) RETURN a.id_account AS id",
+        "MATCH (a:Account {id_account: $aid}) "
+        "OPTIONAL MATCH (a)-[h:HAS_SKILL]->(:Skill) "
+        "RETURN a.id_account AS id, count(h) AS skill_count",
         aid=account_id,
     ).single()
-    return {"id": rec["id"], "name": rec["id"]} if rec else None
+    return {"id": rec["id"], "name": rec["id"], "skill_count": rec["skill_count"]} if rec else None
 
 
 # ---------------------------------------------------------------------------
 # BY ROLE
 # ---------------------------------------------------------------------------
 @router.get("/roadmap/by-role/{role_id}")
-def roadmap_by_role(role_id: str, account_id: str | None = None):
+def roadmap_by_role(request: Request, role_id: str, account_id: str | None = None):
+    account_id = _effective_account(_viewer(request), account_id)
     driver = get_driver()
     with driver.session(database=NEO4J_DATABASE) as session:
         role_rec = session.run(
@@ -148,7 +242,8 @@ def roadmap_by_role(role_id: str, account_id: str | None = None):
 
         skills = session.run(
             "MATCH (r:JobRole {id: $rid})-[req:REQUIRES]->(s:Skill) "
-            "RETURN s.id AS id, s.name AS name, s.level AS level, req.weight AS weight "
+            "RETURN s.id AS id, s.name AS name, s.level AS level, "
+            "       s.description AS description, req.weight AS weight "
             "ORDER BY s.level, s.name",
             rid=role_id,
         ).data()
@@ -158,7 +253,9 @@ def roadmap_by_role(role_id: str, account_id: str | None = None):
             "MATCH (r:JobRole {id: $rid})-[:REQUIRES]->(s:Skill)-[pr:REQUIRES]->(p) "
             "WHERE p:Skill OR p:Knowledge "
             "RETURN s.id AS skill_id, p.id AS prereq_id, p.name AS prereq_name, "
-            "       head(labels(p)) AS prereq_type, p.level AS prereq_level, pr.weight AS weight",
+            "       head(labels(p)) AS prereq_type, "
+            "       coalesce(p.level, p.difficulty) AS prereq_level, "
+            "       p.description AS prereq_description, pr.weight AS weight",
             rid=role_id,
         ).data()
 
@@ -215,6 +312,7 @@ def _build_role_tree(root, skills, prereqs, acc_map, res_skill, res_know, accoun
         skill_items.append({
             "ref_id": sid, "name": s["name"], "type": "Skill",
             "level": s.get("level") or "beginner",
+            "description": s.get("description"),
             "prof": prof, "status": _status_of(prof),
             "importance": _importance_of(s.get("weight")), "weight": s.get("weight"),
             "ready": len(locked_by) == 0, "locked_by": locked_by,
@@ -224,6 +322,8 @@ def _build_role_tree(root, skills, prereqs, acc_map, res_skill, res_know, accoun
 
     # ---- Skill nodes: root → skill, xếp tầng theo độ khó ----
     KNOW_TIER = len(SKILL_LEVELS) + 2  # dưới mọi skill
+    status_by_id: dict[str, str | None] = {}
+    by_level: dict[str, list] = {}
     for it in skill_items:
         nid = f"skill_{it['ref_id']}"
         tier = 1 + _LEVEL_RANK.get(it["level"], 0)
@@ -234,12 +334,16 @@ def _build_role_tree(root, skills, prereqs, acc_map, res_skill, res_know, accoun
             "ref_id": it["ref_id"], "importance": it["importance"],
             "ready": it["ready"], "locked_by": it["locked_by"],
             "difficulty": it["level"], "proficiency": it["prof"],
-            "resources": it["resources"],
+            "description": it["description"], "resources": it["resources"],
         })
         seen.add(nid)
+        status_by_id[nid] = it["status"] if personalized else None
+        by_level.setdefault(it["level"], []).append(nid)
         edges.append({"from": root_id, "to": nid})
 
     # ---- Tiên quyết ----
+    # Cạnh dashed luôn đi theo chiều: tiên quyết -> mục phụ thuộc.
+    support_ids = []
     for skill_id, plist in prereq_by_skill.items():
         sid = f"skill_{skill_id}"
         if sid not in seen:
@@ -260,22 +364,37 @@ def _build_role_tree(root, skills, prereqs, acc_map, res_skill, res_know, accoun
                     "ref_id": ref, "importance": _importance_of(p.get("weight")),
                     "ready": True, "locked_by": [],
                     "difficulty": p.get("prereq_level"),
+                    "description": p.get("prereq_description"),
                     "resources": (res_know if ptype == "Knowledge" else res_skill).get(
                         ref, {"contents": 0, "quizzes": 0, "mentors": 0}),
                 })
                 seen.add(pid)
-            edges.append({"from": sid, "to": pid, "style": "dashed"})
+                status_by_id[pid] = pstatus if personalized else None
+                support_ids.append(pid)
+            edges.append({"from": pid, "to": sid, "style": "dashed"})
+
+    # ---- Chặng: theo cấp độ khó, chặng "nền" xếp cuối ----
+    groups = [
+        _make_group(lvl, LEVEL_LABEL[lvl], "level", by_level[lvl], status_by_id, personalized)
+        for lvl in SKILL_LEVELS if lvl in by_level
+    ]
+    if support_ids:
+        groups.append(_make_group("support", "Nền tảng cần có", "support",
+                                  support_ids, status_by_id, personalized))
+    current = _mark_current(groups, personalized)
 
     summary = _summarize(skill_items, root, "kỹ năng", personalized, unit_label="skill")
+    summary["current_group"] = current
     return {"root": root, "account": account, "personalized": personalized,
-            "nodes": nodes, "edges": edges, "summary": summary}
+            "nodes": nodes, "edges": edges, "groups": groups, "summary": summary}
 
 
 # ---------------------------------------------------------------------------
 # BY AREA
 # ---------------------------------------------------------------------------
 @router.get("/roadmap/by-area/{area_id}")
-def roadmap_by_area(area_id: str, account_id: str | None = None):
+def roadmap_by_area(request: Request, area_id: str, account_id: str | None = None):
+    account_id = _effective_account(_viewer(request), account_id)
     driver = get_driver()
     with driver.session(database=NEO4J_DATABASE) as session:
         area_rec = session.run(
@@ -298,6 +417,7 @@ def roadmap_by_area(area_id: str, account_id: str | None = None):
             "WHERE owner = a OR (a)-[:PARENT_OF]->(owner) "
             "RETURN owner.id AS area_id, owner.name AS area_name, "
             "       k.id AS id, k.name AS name, k.kind AS kind, "
+            "       k.description AS description, "
             "       k.difficulty AS difficulty, h.weight AS weight "
             "ORDER BY k.name",
             aid=area_id,
@@ -374,6 +494,7 @@ def _build_area_tree(root, subareas, knowledge, know_prof, prereq_pairs, res_kno
         know_items.append({
             "ref_id": kid, "name": k["name"], "type": "Knowledge",
             "level": k.get("difficulty") or "beginner",
+            "description": k.get("description"),
             "prof": know_prof.get(kid), "status": status,
             "importance": importance, "weight": k.get("weight"),
             "ready": len(locked_by) == 0, "locked_by": locked_names,
@@ -381,12 +502,15 @@ def _build_area_tree(root, subareas, knowledge, know_prof, prereq_pairs, res_kno
             "resources": res_know.get(kid, {"contents": 0, "quizzes": 0, "mentors": 0}),
         })
 
+    status_by_id: dict[str, str | None] = {}
+    by_area: dict[str, list] = {}
     for it in know_items:
         kid = f"knowledge_{it['ref_id']}"
         owner = it["area_id"]
         parent_id = root_id if owner == root["id"] else f"area_{owner}"
         if parent_id not in seen:
             parent_id = root_id
+            owner = root["id"]
         if kid not in seen:
             nodes.append({
                 "id": kid, "label": it["name"], "type": "Knowledge", "level": 2,
@@ -395,14 +519,34 @@ def _build_area_tree(root, subareas, knowledge, know_prof, prereq_pairs, res_kno
                 "ref_id": it["ref_id"], "importance": it["importance"],
                 "ready": it["ready"], "locked_by": it["locked_by"],
                 "difficulty": it["level"], "proficiency": it["prof"],
-                "kind": it["kind"], "resources": it["resources"],
+                "kind": it["kind"], "description": it["description"],
+                "resources": it["resources"],
             })
             seen.add(kid)
+            status_by_id[kid] = it["status"] if personalized else None
+            by_area.setdefault(owner, []).append(kid)
         edges.append({"from": parent_id, "to": kid})
 
+    # Tiên quyết giữa knowledge: cùng quy ước tiên quyết -> mục phụ thuộc như by-role.
+    for pp in prereq_pairs:
+        a, b = f"knowledge_{pp['before']}", f"knowledge_{pp['after']}"
+        if a in seen and b in seen:
+            edges.append({"from": a, "to": b, "style": "dashed"})
+
+    # ---- Chặng: knowledge của chính area trước, rồi tới từng lĩnh vực con ----
+    groups = []
+    if root["id"] in by_area:
+        groups.append(_make_group(f"area_{root['id']}", root["name"], "area",
+                                  by_area[root["id"]], status_by_id, personalized))
+    for a in subareas:
+        groups.append(_make_group(f"area_{a['id']}", a["name"], "area",
+                                  by_area.get(a["id"], []), status_by_id, personalized))
+    current = _mark_current(groups, personalized)
+
     summary = _summarize(know_items, root, "kiến thức", personalized, unit_label="knowledge")
+    summary["current_group"] = current
     return {"root": root, "account": account, "personalized": personalized,
-            "nodes": nodes, "edges": edges, "summary": summary}
+            "nodes": nodes, "edges": edges, "groups": groups, "summary": summary}
 
 
 # ---------------------------------------------------------------------------
@@ -498,4 +642,5 @@ def _summarize(items, root, unit_vi, personalized, unit_label):
         "milestones": milestones, "next_steps": next_steps,
         "headline": headline, "sub": sub,
         "status_label": STATUS_LABEL, "importance_label": IMPORTANCE_LABEL,
+        "level_label": LEVEL_LABEL,
     }

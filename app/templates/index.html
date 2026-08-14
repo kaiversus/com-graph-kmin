@@ -280,11 +280,19 @@
         </div>
 
         <div class="rv-experts-card">
-          <h3>Tài khoản chuyên gia</h3>
+          <h3>Tài khoản đăng nhập</h3>
+          <p class="hint">Chuyên gia: đề xuất thay đổi, chờ duyệt. Học viên: chỉ xem lộ trình của chính mình, phải gắn với một Account trong graph.</p>
           <div class="rv-expert-add">
+            <select id="rv-usr-role">
+              <option value="expert">Chuyên gia</option>
+              <option value="user">Học viên</option>
+            </select>
             <input id="rv-usr-email" type="email" placeholder="email@…" />
             <input id="rv-usr-name" placeholder="Tên hiển thị" />
-            <input id="rv-usr-pw" type="text" placeholder="Mật khẩu (đưa cho chuyên gia)" />
+            <input id="rv-usr-pw" type="text" placeholder="Mật khẩu (đưa cho họ)" />
+            <select id="rv-usr-acc" hidden>
+              <option value="">-- Gắn với Account nào --</option>
+            </select>
             <button id="rv-usr-add" type="button">+ Tạo tài khoản</button>
           </div>
           <div id="rv-users" class="rv-experts"><div class="hint">Đang tải…</div></div>
@@ -374,71 +382,61 @@
   <!-- ========== ROADMAP ========== -->
   <section id="roadmap" class="panel">
     <div class="roadmap-header">
-      <h2>Learning Roadmap</h2>
-      <p class="roadmap-subtitle">Chọn vai trò (JobRole) hoặc lĩnh vực (KnowledgeArea), và (tùy chọn) một học viên để xem <strong>bạn đang ở đâu, cần học gì tiếp, cái gì quan trọng</strong>. Sơ đồ đọc từ trên xuống theo thứ tự nên học.</p>
+      <h2>Lộ trình học</h2>
+      <p class="roadmap-subtitle">Chọn điểm xuất phát — một <strong>vai trò nghề nghiệp</strong> hoặc một <strong>lĩnh vực kiến thức</strong>. Thêm học viên để thấy <strong>đang ở đâu, học gì tiếp, còn bao xa tới đích</strong>. Lộ trình đọc từ trên xuống, mỗi chặng là một cấp độ.</p>
     </div>
 
-    <div class="roadmap-controls">
-      <!-- Chọn học viên để cá nhân hóa -->
-      <div class="roadmap-learner-bar">
-        <div class="rsc-icon">🧑‍🎓</div>
-        <div class="rsc-body">
-          <label>Học viên (để xem tiến độ cá nhân — bỏ trống = bản chung)</label>
+    <!-- Thanh thiết lập: 1 hàng, 1 nút hành động -->
+    <div class="rm-setup">
+      <div class="rm-setup-row">
+        <div class="rm-field">
+          <label for="rm-account-sel">👤 Học viên</label>
           <select id="rm-account-sel">
-            <option value="">-- Không chọn (bản chung) --</option>
+            <option value="">Bản chung (chưa cá nhân hoá)</option>
           </select>
         </div>
-      </div>
-
-      <div class="roadmap-source-group">
-        <div class="roadmap-source-card" id="rm-source-role">
-          <div class="rsc-icon">🧭</div>
-          <div class="rsc-body">
-            <label>Theo vai trò nghề nghiệp</label>
-            <select id="rm-role-sel">
-              <option value="">-- Chọn JobRole --</option>
-            </select>
-          </div>
-          <button id="rm-gen-role" type="button" class="roadmap-gen-btn">Tạo Roadmap</button>
+        <div class="rm-field">
+          <label for="rm-kind-sel">Xuất phát từ</label>
+          <select id="rm-kind-sel">
+            <option value="role">🧭 Vai trò nghề nghiệp</option>
+            <option value="area">📂 Lĩnh vực kiến thức</option>
+          </select>
         </div>
-        <div class="roadmap-source-card" id="rm-source-area">
-          <div class="rsc-icon">📂</div>
-          <div class="rsc-body">
-            <label>Theo lĩnh vực kiến thức</label>
-            <select id="rm-area-sel">
-              <option value="">-- Chọn KnowledgeArea --</option>
-            </select>
-          </div>
-          <button id="rm-gen-area" type="button" class="roadmap-gen-btn">Tạo Roadmap</button>
+        <div class="rm-field rm-field-grow">
+          <label for="rm-role-sel" id="rm-target-label">Vai trò</label>
+          <select id="rm-role-sel">
+            <option value="">-- Chọn vai trò --</option>
+          </select>
+          <select id="rm-area-sel" hidden>
+            <option value="">-- Chọn lĩnh vực --</option>
+          </select>
         </div>
+        <button id="rm-gen" type="button" class="roadmap-gen-btn">Tạo lộ trình</button>
       </div>
+      <div id="rm-setup-hint" class="rm-setup-hint" role="alert" hidden></div>
     </div>
 
-    <div id="rm-legend" class="roadmap-legend" style="display:none">
-      <span id="rm-legend-status" style="display:none;align-items:center;gap:16px">
-        <span class="rm-legend-title">Trạng thái:</span>
-        <span class="rm-legend-item"><span class="rm-dot rm-dot-done"></span> Đã đạt</span>
-        <span class="rm-legend-item"><span class="rm-dot rm-dot-progress"></span> Đang học</span>
-        <span class="rm-legend-item"><span class="rm-dot rm-dot-todo"></span> Chưa học</span>
-        <span class="rm-legend-sep"></span>
-      </span>
-      <span class="rm-legend-title">Loại:</span>
-      <span class="rm-legend-item"><span class="rm-dot rm-dot-root"></span> Vai trò / Lĩnh vực</span>
-      <span class="rm-legend-item"><span class="rm-dot rm-dot-skill"></span> Kỹ năng</span>
-      <span class="rm-legend-item"><span class="rm-dot rm-dot-concept"></span> Knowledge</span>
-      <span class="rm-legend-hint">· nét đứt = tiên quyết / phụ thuộc · bấm node để xem chi tiết</span>
-    </div>
+    <!-- Tóm tắt lộ trình: tên, tiến độ, câu dẫn -->
+    <div id="rm-hero"></div>
 
-    <!-- Dashboard 2 khung: cây (trái) + panel chi tiết (phải) -->
+    <!-- Thanh công cụ: tìm, lọc, điều hướng -->
+    <div id="rm-toolbar"></div>
+
+    <!-- Dashboard 2 khung: track (trái) + panel chi tiết (phải) -->
     <div id="rm-dashboard" class="roadmap-dashboard">
       <div id="rm-canvas" class="roadmap-canvas">
         <div class="roadmap-empty-state">
           <div class="res-icon">🗺️</div>
-          <h3>Chưa có Roadmap</h3>
-          <p>Chọn vai trò hoặc lĩnh vực ở trên (và một học viên nếu muốn), rồi bấm <strong>Tạo Roadmap</strong>.</p>
+          <h3>Chưa có lộ trình nào</h3>
+          <p>Ba bước để xem lộ trình:</p>
+          <ol class="rm-howto">
+            <li><strong>Chọn học viên</strong> — bỏ trống cũng được, khi đó bạn xem bản chung không có tiến độ.</li>
+            <li><strong>Chọn điểm xuất phát</strong> — một vai trò nghề nghiệp (muốn làm nghề gì) hoặc một lĩnh vực kiến thức (muốn học mảng nào).</li>
+            <li>Bấm <strong>Tạo lộ trình</strong>.</li>
+          </ol>
         </div>
       </div>
-      <aside id="rm-panel" class="roadmap-panel" style="display:none"></aside>
+      <aside id="rm-panel" class="roadmap-panel" hidden></aside>
     </div>
   </section>
 

@@ -2,8 +2,15 @@
 Auth — đăng nhập bằng email + mật khẩu, phiên giữ bằng cookie ký HMAC.
 
 Tài khoản lưu ở node `AppUser` (node HỆ THỐNG, tách hẳn Account nghiệp vụ):
-    { email (khóa chính, lowercase), name, role: 'admin'|'expert',
-      password_hash, created_at, must_change_pw }
+    { email (khóa chính, lowercase), name, role: 'admin'|'expert'|'user',
+      password_hash, created_at, must_change_pw, account_id? }
+
+Ba vai trò:
+  - `admin`  : toàn quyền, ghi thẳng vào graph.
+  - `expert` : chuyên gia, thao tác đi vào lô đề xuất chờ duyệt.
+  - `user`   : HỌC VIÊN. Chỉ xem được lộ trình của CHÍNH MÌNH, không thấy tab nào khác.
+               Bắt buộc có `account_id` trỏ tới `Account.id_account` trong graph —
+               đó là sợi dây duy nhất nối tài khoản đăng nhập với hồ sơ học tập.
 
 Bảo mật:
   - Mật khẩu băm PBKDF2-HMAC-SHA256 + salt riêng (không lưu mật khẩu thô).
@@ -30,6 +37,9 @@ from app.config import (
 
 COOKIE_NAME = "gdb_session"
 _PBKDF2_ROUNDS = 200_000
+
+ROLES = ("admin", "expert", "user")
+ROLE_LABEL = {"admin": "Admin", "expert": "Chuyên gia", "user": "Học viên"}
 
 
 # ---- Mật khẩu ----
@@ -92,11 +102,27 @@ def get_user(email: str) -> dict | None:
     with driver.session(database=NEO4J_DATABASE) as s:
         rec = s.run(
             "MATCH (u:AppUser {email: $e}) RETURN u.email AS email, u.name AS name, "
-            "u.role AS role, u.password_hash AS password_hash, "
+            "u.role AS role, u.password_hash AS password_hash, u.account_id AS account_id, "
             "coalesce(u.must_change_pw, false) AS must_change_pw",
             e=_norm(email),
         ).single()
     return dict(rec) if rec else None
+
+
+def account_id_of(email: str | None) -> str | None:
+    """Account.id_account gắn với tài khoản đăng nhập này. None nếu chưa gắn.
+
+    Đây là nguồn DUY NHẤT để biết một học viên được xem hồ sơ nào — không bao giờ
+    tin `account_id` do client gửi lên (xem `_effective_account` trong roadmap.py).
+    """
+    if not email:
+        return None
+    driver = get_driver()
+    with driver.session(database=NEO4J_DATABASE) as s:
+        rec = s.run(
+            "MATCH (u:AppUser {email: $e}) RETURN u.account_id AS aid", e=_norm(email)
+        ).single()
+    return rec["aid"] if rec else None
 
 
 def list_users(role: str | None = None) -> list[dict]:
@@ -105,32 +131,51 @@ def list_users(role: str | None = None) -> list[dict]:
     with driver.session(database=NEO4J_DATABASE) as s:
         return s.run(
             f"MATCH (u:AppUser) {where}RETURN u.email AS email, u.name AS name, "
-            "u.role AS role, toString(u.created_at) AS created_at ORDER BY u.role, u.email",
+            "u.role AS role, u.account_id AS account_id, "
+            "toString(u.created_at) AS created_at ORDER BY u.role, u.email",
             role=role,
         ).data()
 
 
-def create_user(email: str, name: str, password: str, role: str = "expert") -> dict:
+def create_user(email: str, name: str, password: str, role: str = "expert",
+                account_id: str | None = None) -> dict:
     email = _norm(email)
     name = (name or "").strip()
+    account_id = (account_id or "").strip() or None
     if not email or "@" not in email:
         raise HTTPException(400, "Email không hợp lệ")
     if not name:
         raise HTTPException(400, "Cần tên hiển thị")
     if not password or len(password) < 6:
         raise HTTPException(400, "Mật khẩu tối thiểu 6 ký tự")
-    if role not in ("admin", "expert"):
-        raise HTTPException(400, "role phải là admin hoặc expert")
+    if role not in ROLES:
+        raise HTTPException(400, f"role phải là một trong {', '.join(ROLES)}")
+    if role == "user":
+        if not account_id:
+            raise HTTPException(400, "Tài khoản học viên bắt buộc phải gắn với một Account trong graph")
+        if not _account_exists(account_id):
+            raise HTTPException(400, f"Không có Account nào với id_account = '{account_id}' trong graph")
+    else:
+        account_id = None      # chỉ học viên mới cần dây nối này
     if get_user(email):
         raise HTTPException(409, f"Email '{email}' đã tồn tại")
     driver = get_driver()
     with driver.session(database=NEO4J_DATABASE) as s:
         s.run(
             "CREATE (u:AppUser {email: $e, name: $n, role: $r, password_hash: $ph, "
-            "created_at: datetime(), must_change_pw: false})",
-            e=email, n=name, r=role, ph=hash_password(password),
+            "account_id: $aid, created_at: datetime(), must_change_pw: false})",
+            e=email, n=name, r=role, ph=hash_password(password), aid=account_id,
         )
-    return {"email": email, "name": name, "role": role}
+    return {"email": email, "name": name, "role": role, "account_id": account_id}
+
+
+def _account_exists(account_id: str) -> bool:
+    driver = get_driver()
+    with driver.session(database=NEO4J_DATABASE) as s:
+        rec = s.run(
+            "MATCH (a:Account {id_account: $aid}) RETURN count(a) AS c", aid=account_id
+        ).single()
+    return bool(rec and rec["c"])
 
 
 def delete_user(email: str) -> dict:

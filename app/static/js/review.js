@@ -1,5 +1,5 @@
 // ===== Auth (đăng nhập) + quản tài khoản + duyệt đề xuất =====
-import { IDENTITY, fetchIdentity, isExpert, isAdmin } from './core.js';
+import { IDENTITY, fetchIdentity, isExpert, isAdmin, isLearner } from './core.js';
 
 let RB_COMMIT_LABEL = 'Commit cả cây';
 let onAuthed = null;   // callback nạp dữ liệu app sau khi đăng nhập
@@ -22,6 +22,24 @@ function showApp() {
 
 // ---- Áp vai trò lên UI ----
 function applyRole() {
+  // Hoc vien: chi con dung tab Roadmap. Chan o FE cho gon mat — chan that nam o
+  // middleware _auth_gate + allowlist _USER_ALLOWED trong app/main.py.
+  if (isLearner()) {
+    document.querySelectorAll('nav.tabs .tab').forEach(btn => {
+      btn.style.display = btn.dataset.tab === 'roadmap' ? '' : 'none';
+    });
+    const rm = document.querySelector('.tab[data-tab="roadmap"]');
+    if (rm && !rm.classList.contains('active')) rm.click();
+    document.querySelectorAll('.expert-note').forEach(el => { el.style.display = 'none'; });
+    const bp0 = document.getElementById('batch-panel');
+    if (bp0) bp0.style.display = 'none';
+    document.getElementById('identity-current').innerHTML =
+      `👤 <b>${esc(IDENTITY.name)}</b> <span class="id-email">${esc(IDENTITY.email)}</span>`
+      + ' — Học viên · chỉ xem lộ trình của mình';
+    document.body.classList.add('role-learner');
+    return;
+  }
+
   const expert = isExpert();
   document.querySelectorAll('.tab[data-admin-only]').forEach(btn => { btn.style.display = expert ? 'none' : ''; });
   const active = document.querySelector('.tab.active');
@@ -127,34 +145,73 @@ async function doChangePw() {
   alert(r.ok ? '✓ Đã đổi mật khẩu.' : 'Lỗi: ' + (d.detail || JSON.stringify(d)));
 }
 
-// ---- Quản lý tài khoản chuyên gia (admin) ----
+// ---- Quản lý tài khoản chuyên gia + học viên (admin) ----
+const ROLE_VI = { admin: 'Admin', expert: 'Chuyên gia', user: 'Học viên' };
+
 async function loadUsers() {
   const box = document.getElementById('rv-users');
   if (!box) return;
   let users = [];
-  try { users = await (await fetch('/api/auth/users?role=expert')).json(); } catch { /* ignore */ }
+  // Lay ca chuyen gia lan hoc vien; admin goc khong hien (khong xoa duoc).
+  try {
+    const all = await (await fetch('/api/auth/users')).json();
+    users = (all || []).filter(u => u.role !== 'admin');
+  } catch { /* ignore */ }
   box.innerHTML = users.length
-    ? users.map(u => `<div class="rv-exp-row"><span><b>${esc(u.name)}</b> <code>${esc(u.email)}</code></span>`
-        + `<button type="button" class="danger rv-usr-del" data-email="${esc(u.email)}">Xoá</button></div>`).join('')
-    : '<div class="hint">Chưa có tài khoản chuyên gia. Tạo ở trên.</div>';
+    ? users.map(u => {
+        const bound = u.role === 'user'
+          ? (u.account_id
+              ? ` → <code>${esc(u.account_id)}</code>`
+              : ' <span class="rv-warn">chưa gắn Account</span>')
+          : '';
+        return `<div class="rv-exp-row"><span><b>${esc(u.name)}</b> <code>${esc(u.email)}</code>`
+          + ` <span class="rv-role-tag rv-role-${esc(u.role)}">${esc(ROLE_VI[u.role] || u.role)}</span>${bound}</span>`
+          + `<button type="button" class="danger rv-usr-del" data-email="${esc(u.email)}">Xoá</button></div>`;
+      }).join('')
+    : '<div class="hint">Chưa có tài khoản nào. Tạo ở trên.</div>';
   box.querySelectorAll('.rv-usr-del').forEach(b => b.addEventListener('click', () => deleteUser(b.dataset.email)));
 }
 
+// Nap danh sach Account de gan cho hoc vien (dung lai endpoint roadmap sources).
+async function loadAccountOptions() {
+  const sel = document.getElementById('rv-usr-acc');
+  if (!sel || sel.dataset.loaded) return;
+  try {
+    const d = await (await fetch('/api/roadmap/sources')).json();
+    (d.accounts || []).forEach(a => {
+      const n = a.skill_count;
+      const label = n == null ? a.id : `${a.id} — ${n > 0 ? n + ' kỹ năng' : 'chưa có dữ liệu'}`;
+      sel.appendChild(new Option(label, a.id));
+    });
+    sel.dataset.loaded = '1';
+  } catch { /* ignore */ }
+}
+
+function syncUserRoleUI() {
+  const isLearnerRole = document.getElementById('rv-usr-role').value === 'user';
+  document.getElementById('rv-usr-acc').hidden = !isLearnerRole;
+  if (isLearnerRole) loadAccountOptions();
+}
+
 async function addUser() {
+  const role = document.getElementById('rv-usr-role').value;
   const email = document.getElementById('rv-usr-email').value.trim();
   const name = document.getElementById('rv-usr-name').value.trim();
   const pw = document.getElementById('rv-usr-pw').value;
+  const accountId = document.getElementById('rv-usr-acc').value;
   if (!email || !name || !pw) { alert('Nhập email, tên và mật khẩu.'); return; }
+  if (role === 'user' && !accountId) { alert('Học viên phải được gắn với một Account trong graph.'); return; }
   const r = await fetch('/api/auth/users', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, name, password: pw, role: 'expert' }),
+    body: JSON.stringify({ email, name, password: pw, role, account_id: accountId || null }),
   });
   const d = await r.json();
   if (!r.ok) { alert('Lỗi: ' + (d.detail || JSON.stringify(d))); return; }
   document.getElementById('rv-usr-email').value = '';
   document.getElementById('rv-usr-name').value = '';
   document.getElementById('rv-usr-pw').value = '';
-  alert(`✓ Đã tạo tài khoản ${email}. Gửi email + mật khẩu vừa đặt cho chuyên gia.`);
+  document.getElementById('rv-usr-acc').value = '';
+  alert(`✓ Đã tạo tài khoản ${ROLE_VI[role]} ${email}. Gửi email + mật khẩu vừa đặt cho họ.`);
   loadUsers();
 }
 
@@ -320,6 +377,7 @@ async function initAuth(onAuthedCb) {
   document.getElementById('rv-refresh').addEventListener('click', loadQueue);
   document.getElementById('rv-filter').addEventListener('change', loadQueue);
   document.getElementById('rv-usr-add').addEventListener('click', addUser);
+  document.getElementById('rv-usr-role').addEventListener('change', syncUserRoleUI);
 
   const logged = await fetchIdentity();
   if (logged) {

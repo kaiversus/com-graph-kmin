@@ -176,7 +176,7 @@ RELATIONSHIP_SCHEMA = {
             "depth": {
                 "type": "string",
                 "required": True,
-                "enum": ["overview", "applied", "deep_dive"],
+                "enum": ["overview", "theory", "practice", "mastery"],
             },
         },
     },

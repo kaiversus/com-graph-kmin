@@ -60,7 +60,27 @@ def export_nodes(
     rows = [r["props"] for r in records]
 
     if fmt == "csv":
-        return _to_csv_response(rows, f"nodes_{label}.csv")
+        from app.services.csv_mapping import NODE_PRESETS
+        target_filename = f"nodes_{label}.csv"
+        preset = None
+        for fname, p in NODE_PRESETS.items():
+            if p["label"] == label:
+                target_filename = fname
+                preset = p
+                break
+
+        if preset:
+            # Reverse map: internal_field -> csv_col để xuất đúng tên cột
+            reverse_map = {internal: csv_col for csv_col, internal in preset["header_map"].items()}
+            mapped_rows = []
+            for row in rows:
+                mapped_row = {}
+                for internal, csv_col in reverse_map.items():
+                    mapped_row[csv_col] = row.get(internal, "")
+                mapped_rows.append(mapped_row)
+            return _to_csv_response(mapped_rows, target_filename)
+        else:
+            return _to_csv_response(rows, target_filename)
     return rows
 
 

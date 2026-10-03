@@ -87,9 +87,9 @@ RELATIONSHIP_SCHEMA = {
         },
     },
     "RELATED_TO": {
-        # Skill<->Skill hoặc Knowledge<->Knowledge (đối xứng, cùng label).
-        "starts": {"Skill", "Knowledge"},
-        "ends": {"Skill", "Knowledge"},
+        # Skill<->Skill hoặc Knowledge<->Knowledge hoặc KnowledgeArea<->KnowledgeArea (đối xứng, cùng label).
+        "starts": {"Skill", "Knowledge", "KnowledgeArea"},
+        "ends": {"Skill", "Knowledge", "KnowledgeArea"},
         "same_label": True,
         "props": {
             "relation_type": {
@@ -101,10 +101,9 @@ RELATIONSHIP_SCHEMA = {
     },
     # --- Knowledge Area taxonomy ---
     "HAS": {
-        # KnowledgeArea -> Knowledge. Ràng buộc: chỉ KnowledgeArea LÁ (không có con
-        # qua PARENT_OF) mới được HAS tới Knowledge — enforce ở importer.
+        # KnowledgeArea -> Knowledge (and now Skill to support user's dataset). 
         "starts": {"KnowledgeArea"},
-        "ends": {"Knowledge"},
+        "ends": {"Knowledge", "Skill"},
         "start_leaf_of": "PARENT_OF",
         "props": {
             "weight": {"type": "float", "required": False, "min": 0.0, "max": 1.0, "default": 1.0},
@@ -169,9 +168,9 @@ RELATIONSHIP_SCHEMA = {
         "props": {},
     },
     "COVERS": {
-        # Content -> Knowledge
+        # Content -> Knowledge or Skill
         "starts": {"Content"},
-        "ends": {"Knowledge"},
+        "ends": {"Knowledge", "Skill"},
         "props": {
             "depth": {
                 "type": "string",

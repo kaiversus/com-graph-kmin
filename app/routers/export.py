@@ -71,7 +71,13 @@ def export_nodes(
 
         if preset:
             # Reverse map: internal_field -> csv_col để xuất đúng tên cột
-            reverse_map = {internal: csv_col for csv_col, internal in preset["header_map"].items()}
+            # Bỏ qua _ignore
+            reverse_map = {}
+            for csv_col, internal in preset["header_map"].items():
+                if internal != "_ignore" and internal not in reverse_map:
+                    # Keep the first mapping (usually the native one, or we can keep the last one if we want the alias)
+                    reverse_map[internal] = csv_col
+                    
             mapped_rows = []
             for row in rows:
                 mapped_row = {}
@@ -266,6 +272,13 @@ def _to_csv_response(rows: list[dict], filename: str) -> StreamingResponse:
             media_type="text/csv",
             headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
+        
+    # Serialize arrays to comma-separated strings
+    for row in rows:
+        for k, v in row.items():
+            if isinstance(v, list):
+                row[k] = ", ".join(str(x) for x in v)
+                
     buf = io.StringIO()
     all_keys = list(dict.fromkeys(k for row in rows for k in row))
     writer = csv.DictWriter(buf, fieldnames=all_keys)

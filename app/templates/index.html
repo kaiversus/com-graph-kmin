@@ -43,9 +43,17 @@
     <button data-tab="review" class="tab" data-admin-only>Review · Duyệt <span id="review-badge" class="review-badge" style="display:none">0</span></button>
     <button data-tab="audit" class="tab" data-admin-only>Audit · Restore</button>
     <button data-tab="viz" class="tab">Visualizer</button>
+    <button data-tab="react-viz" class="tab" data-admin-only>Advanced Graph</button>
     <button data-tab="roadmap" class="tab">Roadmap</button>
     <button data-tab="export" class="tab" data-admin-only>Export Data</button>
   </nav>
+
+  <!-- ========== REACT ADMIN GRAPH ========== -->
+  <section id="react-viz" class="panel">
+    <div id="react-admin-root" style="width: 100%; height: calc(100vh - 120px); border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; background: #fff;">
+      <p style="padding: 20px; text-align: center; color: var(--text-muted);">Đang tải Advanced Graph (React)...</p>
+    </div>
+  </section>
 
   <!-- ========== OPTION 1 ========== -->
   <section id="opt1" class="panel active">
@@ -524,6 +532,11 @@
     </div>
   </div>
 
+  <!-- React Admin Graph Bundle -->
+  <link rel="stylesheet" href="/static/react-dist/admin-graph.css" />
+  <script type="module" src="/static/react-dist/admin-graph.js"></script>
+
+  <!-- Script gốc của Vanilla JS Kmin -->
   <script type="module" src="/static/js/main.js"></script>
 </body>
 </html>

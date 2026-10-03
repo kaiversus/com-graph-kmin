@@ -1,0 +1,34 @@
+
+  <!DOCTYPE html>
+  <html lang="en">
+    <head>
+      
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <title>COM26</title>
+      <meta name="description" content="This platform empowers IT learners to enhance their skills through project-based learning, mentorship, and portfolio development, facilitating career growth and job readiness." />
+      <meta name="robots" content="noindex, nofollow" />
+      <link rel="preconnect" href="https://fonts.googleapis.com" />
+      <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+      <style>html, body { height: 100%; margin: 0; } #root { height: 100%; }</style>
+      <script>
+        (function () {
+          try {
+            var stored = localStorage.getItem('theme');
+            var isDark = stored ? stored === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+            if (isDark) document.documentElement.classList.add('dark');
+          } catch (e) {}
+        })();
+      </script>
+
+      <script type="module" crossorigin src="/admin-graph.js"></script>
+      <link rel="stylesheet" crossorigin href="/admin-graph.css">
+    </head>
+
+    <body>
+      
+      <div id="root"></div>
+      
+    </body>
+  </html>
+  

@@ -21,7 +21,19 @@ def _to_list(value: Any) -> list[str]:
     if isinstance(value, (list, tuple)):
         items = value
     else:
-        items = str(value).split(",")
+        s = str(value).strip()
+        if s.startswith("[") and s.endswith("]"):
+            try:
+                import ast
+                parsed = ast.literal_eval(s)
+                if isinstance(parsed, list):
+                    items = parsed
+                else:
+                    items = s.split(",")
+            except Exception:
+                items = s.split(",")
+        else:
+            items = s.split(",")
     return [str(v).strip() for v in items if str(v).strip() != ""]
 
 

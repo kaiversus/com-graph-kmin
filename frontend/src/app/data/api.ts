@@ -1,4 +1,4 @@
-import { GraphNode, GraphRel, NodeLabel, RelType, Graph } from './skillGraph';
+import type { GraphNode, GraphRel, NodeLabel, RelType, Graph } from './skillGraph';
 
 export async function fetchFullGraph(): Promise<{
   nodes: Record<string, any[]>;
@@ -42,12 +42,13 @@ export async function fetchGraphForRole(roleName: string): Promise<Graph> {
     });
   });
 
-  // Find the requested JobRole or fallback to KnowledgeArea
-  let roleNode = allNodes.find(n => n.label === 'JobRole' && (n.props.name === roleName || roleName === 'All'));
+  // Deep links use the stable Neo4j id; the selector uses the display name.
+  let roleNode = allNodes.find(n => n.label === 'JobRole' && (n.id === roleName || n.props.name === roleName));
   if (!roleNode && roleName !== 'All') {
     const shortName = roleName.replace(' Developer', '').replace(' Engineer', '');
-    roleNode = allNodes.find(n => n.label === 'KnowledgeArea' && String(n.props.name || '').includes(shortName));
+    roleNode = allNodes.find(n => n.label === 'KnowledgeArea' && (n.id === roleName || String(n.props.name || '').includes(shortName)));
   }
+  if (!roleNode && roleName !== 'All') roleNode = allNodes.find(n => n.label === 'JobRole');
   
   let filteredNodes = allNodes;
   let filteredRels = allRels;
@@ -88,15 +89,28 @@ export async function fetchGraphForRole(roleName: string): Promise<Graph> {
       });
     });
 
-    // 4. Include any JobRole that REQUIRES these Skills (to ensure JobRole is visible if we started from Area)
-    skills.forEach(id => {
+    // A role view contains only its selected role. Area views may show roles
+    // that use its skills, but must not pull in their entire subgraphs.
+    if (roleNode.label === 'KnowledgeArea') skills.forEach(id => {
       allRels.forEach(r => {
-        if (r.to === id && r.type === 'REQUIRES' && allNodes.find(n => n.id === r.from)?.label === 'JobRole') {
-          visitedNodes.add(r.from);
-        }
+        if (r.to === id && r.type === 'REQUIRES' && allNodes.find(n => n.id === r.from)?.label === 'JobRole') visitedNodes.add(r.from);
       });
     });
     
+    // Preserve area membership and ancestors for grouping a role's knowledge.
+    // Do not include the other concepts owned by those areas.
+    const nodeById = new Map(allNodes.map(n => [n.id, n]));
+    let addedArea = true;
+    while (addedArea) {
+      addedArea = false;
+      allRels.forEach(r => {
+        if ((r.type === 'HAS' || r.type === 'PARENT_OF') && visitedNodes.has(r.to)
+          && nodeById.get(r.from)?.label === 'KnowledgeArea' && !visitedNodes.has(r.from)) {
+          visitedNodes.add(r.from);
+          addedArea = true;
+        }
+      });
+    }
     filteredNodes = allNodes.filter(n => visitedNodes.has(n.id));
     filteredRels = allRels.filter(r => visitedNodes.has(r.from) && visitedNodes.has(r.to));
   }

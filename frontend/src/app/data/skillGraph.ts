@@ -74,7 +74,7 @@ export interface NodeMeta {
 
 export const NODE_META: Record<NodeLabel, NodeMeta> = {
   JobRole: {
-    group: 'graph-owned', pk: 'id', color: '#6366f1',
+    group: 'graph-owned', pk: 'id', color: '#4338ca',
     reading: 'A job title the learner is aiming for',
     props: [
       { name: 'id', type: 'string', required: true },
@@ -86,7 +86,7 @@ export const NODE_META: Record<NodeLabel, NodeMeta> = {
     ]
   },
   Skill: {
-    group: 'graph-owned', pk: 'id', color: '#238ec3',
+    group: 'graph-owned', pk: 'id', color: '#0369a1',
     reading: 'A job-ready ability that can stand on its own line in a JD or CV',
     props: [
       { name: 'id', type: 'string', required: true },
@@ -99,7 +99,7 @@ export const NODE_META: Record<NodeLabel, NodeMeta> = {
     ]
   },
   Knowledge: {
-    group: 'graph-owned', pk: 'id', color: '#14b8a6',
+    group: 'graph-owned', pk: 'id', color: '#0f766e',
     reading: 'An atomic unit of knowledge, small enough to teach and test on its own',
     props: [
       { name: 'id', type: 'string', required: true },
@@ -115,7 +115,7 @@ export const NODE_META: Record<NodeLabel, NodeMeta> = {
     ]
   },
   KnowledgeArea: {
-    group: 'graph-owned', pk: 'id', color: '#64748b',
+    group: 'graph-owned', pk: 'id', color: '#334155',
     reading: 'A folder that organizes Knowledge; only leaf areas hold Knowledge',
     props: [
       { name: 'id', type: 'string', required: true },
@@ -126,27 +126,27 @@ export const NODE_META: Record<NodeLabel, NodeMeta> = {
     ]
   },
   Account: {
-    group: 'shadow', pk: 'id_account', color: '#e05992',
+    group: 'shadow', pk: 'id_account', color: '#be185d',
     reading: 'A learner account; the profile lives in the platform DB',
     props: [{ name: 'id_account', type: 'string', required: true }, ...COMMON_PROPS]
   },
   Task: {
-    group: 'shadow', pk: 'id_task', color: '#f97316',
+    group: 'shadow', pk: 'id_task', color: '#c2410c',
     reading: 'An exercise or project; the brief lives in the content system',
     props: [{ name: 'id_task', type: 'string', required: true }, ...COMMON_PROPS]
   },
   Content: {
-    group: 'shadow', pk: 'id_content', color: '#22c55e',
+    group: 'shadow', pk: 'id_content', color: '#15803d',
     reading: 'A lesson or learning material; the body lives in the content system',
     props: [{ name: 'id_content', type: 'string', required: true }, ...COMMON_PROPS]
   },
   Quiz: {
-    group: 'shadow', pk: 'id_quiz', color: '#eab308',
+    group: 'shadow', pk: 'id_quiz', color: '#a16207',
     reading: 'An assessment; the questions live in the content system',
     props: [{ name: 'id_quiz', type: 'string', required: true }, ...COMMON_PROPS]
   },
   Mentor: {
-    group: 'shadow', pk: 'id_mentor', color: '#a855f7',
+    group: 'shadow', pk: 'id_mentor', color: '#7e22ce',
     reading: 'A mentor; the profile lives in the platform DB',
     props: [{ name: 'id_mentor', type: 'string', required: true }, ...COMMON_PROPS]
   }
@@ -180,31 +180,31 @@ export const REL_META: Record<RelType, RelMeta> = {
     reading: 'is related to (same label, ↔)',
     endpoints: [['Skill', 'Skill'], ['Knowledge', 'Knowledge']],
     props: [{ name: 'relation_type', type: 'string', required: true, enum: RELATION_TYPES }],
-    color: '#0ea5e9', dash: '1 5', marker: 'none', symmetric: true
+    color: '#0369a1', dash: '1 5', marker: 'none', symmetric: true
   },
   HAS: {
     reading: 'area contains knowledge',
     endpoints: [['KnowledgeArea', 'Knowledge']],
     props: [{ name: 'weight', type: 'float', range: [0, 1], note: 'default 1.0' }],
-    color: '#64748b', dash: '4 3', marker: 'diamond'
+    color: '#334155', dash: '4 3', marker: 'diamond'
   },
   PARENT_OF: {
     reading: 'is the parent area of',
     endpoints: [['KnowledgeArea', 'KnowledgeArea']],
     props: [{ name: 'order', type: 'int' }],
-    color: '#64748b', marker: 'arrow'
+    color: '#334155', marker: 'arrow'
   },
   IS_A: {
     reading: 'is a kind of (inheritance)',
     endpoints: [['Knowledge', 'Knowledge']],
     props: [],
-    color: '#14b8a6', marker: 'triangle'
+    color: '#0f766e', marker: 'triangle'
   },
   PREREQUISITE: {
     reading: 'must be learned before',
     endpoints: [['Knowledge', 'Knowledge']],
     props: [],
-    color: '#ef4444', dash: '6 4', marker: 'arrow'
+    color: '#b91c1c', dash: '6 4', marker: 'arrow'
   },
   HAS_SKILL: {
     reading: 'account has skill',
@@ -216,7 +216,7 @@ export const REL_META: Record<RelType, RelMeta> = {
       { name: 'source', type: 'string' },
       { name: 'lastUpdatedAt', type: 'datetime', required: true, note: 'set by server' }
     ],
-    color: '#e05992', marker: 'arrow'
+    color: '#be185d', marker: 'arrow'
   },
   PRACTICES: {
     reading: 'task trains skill',
@@ -225,19 +225,19 @@ export const REL_META: Record<RelType, RelMeta> = {
       { name: 'weight', type: 'float', range: [0, 1] },
       { name: 'is_core', type: 'boolean' }
     ],
-    color: '#f97316', marker: 'arrow'
+    color: '#c2410c', marker: 'arrow'
   },
   APPLIES: {
     reading: 'task applies knowledge',
     endpoints: [['Task', 'Knowledge']],
     props: [],
-    color: '#f97316', dash: '4 3', marker: 'arrow'
+    color: '#c2410c', dash: '4 3', marker: 'arrow'
   },
   COVERS: {
     reading: 'content teaches knowledge',
     endpoints: [['Content', 'Knowledge']],
     props: [{ name: 'depth', type: 'string', required: true, enum: COVER_DEPTHS }],
-    color: '#22c55e', marker: 'arrow'
+    color: '#15803d', marker: 'arrow'
   },
   ASSESSES: {
     reading: 'quiz assesses',
@@ -247,13 +247,13 @@ export const REL_META: Record<RelType, RelMeta> = {
       { name: 'quiz_tag', type: 'enum_list', required: true, enum: QUIZ_TAGS },
       { name: 'weight', type: 'float', range: [0, 1] }
     ],
-    color: '#eab308', marker: 'arrow'
+    color: '#a16207', marker: 'arrow'
   },
   COACHES: {
     reading: 'mentor coaches on',
     endpoints: [['Mentor', 'Skill'], ['Mentor', 'Knowledge']],
     props: [],
-    color: '#a855f7', dash: '8 3 2 3', marker: 'arrow'
+    color: '#7e22ce', dash: '8 3 2 3', marker: 'arrow'
   }
 };
 

@@ -5,7 +5,7 @@ import {
   Star, Play, Briefcase, Map as MapIcon, BarChart3, Search, Layers, X, Network, Shield,
   Calendar, Zap, Folder, User, Hammer, ListChecks, GraduationCap,
   CheckCircle, AlertTriangle, Database, Tag, ArrowRight, ArrowLeft, Palette, Lock, UserPlus,
-  Check, RotateCcw, Circle, ChevronDown, ExternalLink, BookOpen, Compass
+  Check, RotateCcw, Circle, ChevronDown, ExternalLink, BookOpen, Compass, Moon, Sun
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { BRAND_HEX, BRAND_INK_CLS, BRAND_BAR_CLS, MUTED_TINT_CLS } from './courseStyle';
@@ -23,6 +23,7 @@ import {
   confidenceLabel, resourceUrl, hostOf, learningResourcesFor
 } from '../data/skillGraphLearner';
 import type { LearningResource, ResourceKind } from '../data/skillGraphLearner';
+import { adminAtlas, atlasDegrees, atlasLayout, atlasRadius, areaOverview, areaScope, areaSummaryLinks, clusterLayout, knowledgeGroups, normalizeSearch } from '../data/graphPresentation';
 
 // ─── Types & constants ────────────────────────────────────────────────────────
 
@@ -524,7 +525,7 @@ function GraphNodeShape({ g, node, p, colorMode, selected, dimmed, onClick, onHo
   // full strength; "not reached yet" recedes with everything else.
   const muted = colorMode === 'proficiency' && (color === NEUTRAL || state === 'locked' || state === 'untracked');
   const callout = colorMode === 'proficiency' && state === 'missing';
-  const opacity = dimmed ? 0.14 : muted ? 0.55 : deprecated ? 0.6 : 1;
+  const opacity = dimmed ? 0.35 : muted ? 0.8 : deprecated ? 0.8 : 1;
   const name = nodeName(node);
   const halo = { paintOrder: 'stroke' as const, stroke: 'var(--card)', strokeWidth: 3.5, strokeLinejoin: 'round' as const };
 
@@ -533,7 +534,7 @@ function GraphNodeShape({ g, node, p, colorMode, selected, dimmed, onClick, onHo
     text = (
       <text x={r + 5} dy={3.8} fontSize={label === 'KnowledgeArea' ? 11.5 : 11} fill="var(--foreground)"
         fontWeight={label === 'KnowledgeArea' ? 500 : 400} textDecoration={deprecated ? 'line-through' : undefined} style={halo}>
-        {name}
+        <title>{name}</title>{name.length > 28 ? `${name.slice(0, 27)}…` : name}
       </text>
     );
   } else {
@@ -544,7 +545,7 @@ function GraphNodeShape({ g, node, p, colorMode, selected, dimmed, onClick, onHo
       <text textAnchor="middle" dy={dy} fontSize={label === 'JobRole' ? 13 : shadow ? 10 : 12}
         fill={shadow ? 'var(--muted-foreground)' : 'var(--foreground)'} fontWeight={label === 'JobRole' ? 600 : label === 'Skill' ? 500 : 400}
         fontFamily={shadow ? 'ui-monospace, SFMono-Regular, Menlo, monospace' : undefined} style={halo}>
-        {name}
+        <title>{name}</title>{name.length > 28 ? `${name.slice(0, 27)}…` : name}
       </text>
     );
   }
@@ -552,6 +553,10 @@ function GraphNodeShape({ g, node, p, colorMode, selected, dimmed, onClick, onHo
   return (
     <g
       data-node
+      role="button"
+      tabIndex={0}
+      aria-label={name}
+      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
       transform={`translate(${p.x}, ${p.y})`}
       opacity={opacity}
       style={{ cursor: 'pointer', transition: 'opacity 0.2s' }}
@@ -682,13 +687,77 @@ function GraphCanvas({
           return (
             <text key={`lbl-${rel.id}`} x={mid.x} y={mid.y + 3} textAnchor="middle" fontSize={8.5} fontWeight={600}
               letterSpacing={system ? 0.3 : 0} style={{ fill: color, paintOrder: 'stroke', stroke: 'var(--card)', strokeWidth: 3, pointerEvents: 'none' }}>
-              {system ? rel.type : FRIENDLY_REL[rel.type].name.toLowerCase()}
+              {rel.props.derived ? `${rel.props.concept_count} concepts (summary)` : system ? rel.type : FRIENDLY_REL[rel.type].name.toLowerCase()}
             </text>
           );
         })}
       </g>
     </svg>
   );
+}
+
+function AtlasCanvas({ g, nodes, rels, pos, view, selectedId, hoveredNode, searchHits, onSelect, onHoverNode, contentRef }: {
+  g: Graph;
+  nodes: GraphNode[];
+  rels: GraphRel[];
+  pos: Map<string, Pt>;
+  view: { x: number; y: number; k: number };
+  selectedId: string | null;
+  hoveredNode: string | null;
+  searchHits: Set<string> | null;
+  onSelect: (id: string | null) => void;
+  onHoverNode: (id: string | null) => void;
+  contentRef: React.RefObject<SVGGElement>;
+}) {
+  const degree = useMemo(() => atlasDegrees(nodes, rels), [nodes, rels]);
+  const majorAreas = new Set(nodes.filter(n => n.label === 'KnowledgeArea')
+    .sort((a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0))
+    .slice(0, 12).map(n => n.id));
+  const focus = hoveredNode || selectedId;
+  const adjacent = new Set<string>(focus ? [focus] : []);
+  if (focus) rels.forEach(r => {
+    if (r.from === focus) adjacent.add(r.to);
+    if (r.to === focus) adjacent.add(r.from);
+  });
+  return <svg className="relative w-full h-full select-none" onClick={() => onSelect(null)} aria-label="Skill graph by knowledge area">
+    <g ref={contentRef} transform={`translate(${view.x}, ${view.y}) scale(${view.k})`}>
+      {rels.map(r => {
+        const a = pos.get(r.from), b = pos.get(r.to);
+        if (!a || !b) return null;
+        const strong = !!focus && (r.from === focus || r.to === focus);
+        return <line key={r.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+          stroke={strong ? 'var(--atlas-link-active)' : 'var(--atlas-link)'}
+          strokeWidth={strong ? 2.2 : 1.1} opacity={focus ? (strong ? 0.85 : 0.12) : r.props.derived ? 0.5 : 0.34}
+          style={{ pointerEvents: 'none' }} />;
+      })}
+      {nodes.map(n => {
+        const p = pos.get(n.id);
+        if (!p) return null;
+        const color = `var(--atlas-${n.label === 'JobRole' ? 'role' : n.label === 'KnowledgeArea' ? 'area' : n.label === 'Knowledge' ? 'knowledge' : 'skill'})`;
+        const radius = atlasRadius(n.label, degree.get(n.id) || 0);
+        const active = n.id === focus;
+        const faded = (!!focus && !adjacent.has(n.id)) || (!!searchHits && !searchHits.has(n.id));
+        const showLabel = n.label === 'JobRole' || majorAreas.has(n.id) || active || !!searchHits?.has(n.id);
+        const name = nodeName(n);
+        return <g key={n.id} data-node role="button" tabIndex={0} aria-label={`${name}, ${degree.get(n.id) || 0} connections`}
+          transform={`translate(${p.x}, ${p.y})`} opacity={faded ? 0.25 : 1}
+          onClick={e => { e.stopPropagation(); onSelect(n.id); }}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(n.id); } }}
+          onMouseEnter={() => onHoverNode(n.id)} onMouseLeave={() => onHoverNode(null)}
+          style={{ cursor: 'pointer' }}>
+          {n.label === 'KnowledgeArea' && <circle r={radius + 16} fill={tint(color, 8)} stroke={tint(color, 23)} strokeWidth={1} />}
+          {active && <circle r={radius + 8} fill="none" stroke={color} strokeWidth={2} />}
+          <circle r={radius} fill={color} stroke="var(--background)" strokeWidth={3} />
+          {showLabel && <text x={radius + 8} y={4} fill="var(--foreground)" fontSize={n.label === 'JobRole' ? 15 : 12}
+            fontWeight={active || n.label === 'JobRole' ? 700 : 600}
+            style={{ paintOrder: 'stroke', stroke: 'var(--background)', strokeWidth: 4, pointerEvents: 'none' }}>
+            {name.length > 26 ? `${name.slice(0, 25)}…` : name}
+          </text>}
+          <title>{name} · {degree.get(n.id) || 0} connections</title>
+        </g>;
+      })}
+    </g>
+  </svg>;
 }
 
 // ─── Tooltips ─────────────────────────────────────────────────────────────────
@@ -834,6 +903,11 @@ function NodeTooltip({ g, node }: { g: Graph; node: GraphNode }) {
 
 function EdgeTooltip({ g, rel }: { g: Graph; rel: GraphRel }) {
   const { system } = useAudience();
+  if (rel.props.derived) return <div className="bg-popover text-popover-foreground border border-border rounded-xl p-3 shadow-lg w-72 pointer-events-none text-sm">
+    <strong>{rel.props.concept_count} required concepts</strong>
+    <p>{nodeName(g.byId.get(rel.from)!)} requires knowledge in {nodeName(g.byId.get(rel.to)!)}.</p>
+    <p className="text-xs text-muted-foreground mt-2">Summary of hidden concepts, not a stored relationship. Select the area to explore its members.</p>
+  </div>;
   if (!system) return <LearnerEdgeTooltip g={g} rel={rel} />;
   const meta = REL_META[rel.type];
   const a = g.byId.get(rel.from)!;
@@ -855,7 +929,7 @@ function EdgeTooltip({ g, rel }: { g: Graph; rel: GraphRel }) {
         <div className="space-y-1">
           {specs.map(s => (
             <div key={s.name} className="flex justify-between gap-3 text-xs">
-              <span className="font-mono text-muted-foreground">{s.name}{s.required && <span className="text-[#e05992]">*</span>}</span>
+              <span className="font-mono text-muted-foreground">{s.name}{s.required && <span className="text-[#be185d]">*</span>}</span>
               <span className="truncate">{rel.props[s.name] !== undefined ? formatValue(rel.props[s.name]) : '—'}</span>
             </div>
           ))}
@@ -995,7 +1069,7 @@ function NodeDetail({ g, node, onClose, onSelect }: {
                   <div key={spec.name} className="grid grid-cols-[8.5rem_minmax(0,1fr)] gap-2 py-1 border-b border-border/60 last:border-0 text-sm">
                     <div className="min-w-0">
                       <div className="font-mono text-xs truncate">
-                        {spec.name}{spec.required && <span className="text-[#e05992]">*</span>}
+                        {spec.name}{spec.required && <span className="text-[#be185d]">*</span>}
                         {spec.name === meta.pk && <span className="ml-1 text-muted-foreground">PK</span>}
                       </div>
                       <div className="text-[10.5px] text-muted-foreground">{spec.type}</div>
@@ -1563,7 +1637,7 @@ function SchemaView({ g, onPickLabel }: { g: Graph; onPickLabel: (l: NodeLabel) 
                   </td>
                   <td className="px-3 py-2 text-xs font-mono">
                     {m.props.length ? m.props.map(p => (
-                      <div key={p.name}>{p.name}{p.required && <span className="text-[#e05992]">*</span>}<span className="text-muted-foreground"> {p.type}{p.enum ? ` (${p.enum.join(' · ')})` : p.range ? ` [${p.range.join('–')}]` : ''}</span></div>
+                      <div key={p.name}>{p.name}{p.required && <span className="text-[#be185d]">*</span>}<span className="text-muted-foreground"> {p.type}{p.enum ? ` (${p.enum.join(' · ')})` : p.range ? ` [${p.range.join('–')}]` : ''}</span></div>
                     )) : <span className="text-muted-foreground">—</span>}
                   </td>
                   <td className="px-3 py-2 text-right">{countRel(t)}</td>
@@ -1598,7 +1672,7 @@ function SchemaView({ g, onPickLabel }: { g: Graph; onPickLabel: (l: NodeLabel) 
                   <td className="px-3 py-2 text-xs font-mono">
                     <div className="flex flex-wrap gap-x-2.5 gap-y-0.5">
                       {m.props.map(p => (
-                        <span key={p.name}>{p.name}{p.required && <span className="text-[#e05992]">*</span>}{p.name === m.pk && <span className="text-muted-foreground"> (PK)</span>}</span>
+                        <span key={p.name}>{p.name}{p.required && <span className="text-[#be185d]">*</span>}{p.name === m.pk && <span className="text-muted-foreground"> (PK)</span>}</span>
                       ))}
                     </div>
                   </td>
@@ -1609,7 +1683,7 @@ function SchemaView({ g, onPickLabel }: { g: Graph; onPickLabel: (l: NodeLabel) 
           </tbody>
         </table>
       </div>
-      <p className="text-xs text-muted-foreground mt-2"><span className="text-[#e05992]">*</span> required property. source and status are shared by every label.</p>
+      <p className="text-xs text-muted-foreground mt-2"><span className="text-[#be185d]">*</span> required property. source and status are shared by every label.</p>
     </div>
   );
 }
@@ -1672,12 +1746,19 @@ function KnowledgeChain({ g, skillId, onSelect }: { g: Graph; skillId: string; o
         ))}
         {!personal && <span>{ks.length} concepts, in learning order</span>}
       </div>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {order.map((k, j) => (
-          <span key={k} className="flex items-center gap-1.5">
-            {j > 0 && <ChevronRight size={11} className="text-muted-foreground" />}
-            <KnowledgeChip g={g} id={k} onSelect={onSelect} />
-          </span>
+      <div className="space-y-2">
+        <p className="text-xs text-muted-foreground">Grouped by knowledge area. Numbers preserve the overall prerequisite order.</p>
+        {[...knowledgeGroups(g, order)].map(([area, concepts]) => (
+          <details key={area} className="rounded-lg border border-border p-3 bg-background">
+            <summary className="cursor-pointer text-sm font-medium">
+              {area ? nodeName(g.byId.get(area)!) : 'Unassigned knowledge'} · {concepts.length} concepts
+            </summary>
+            <div className="flex flex-wrap gap-2 mt-3">
+              {concepts.map(k => <span key={k} className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                {order.indexOf(k) + 1}. <KnowledgeChip g={g} id={k} onSelect={onSelect} />
+              </span>)}
+            </div>
+          </details>
         ))}
       </div>
     </div>
@@ -2210,13 +2291,17 @@ function RoleOverviewCards({ g, onSelect }: { g: Graph; onSelect: (id: string) =
 
 export function SkillGraphExplorer({ audience }: { audience: Audience }) {
   const cfg = AUDIENCES[audience];
-  const [domain, setDomain] = useState<string>('Frontend Development');
+  const [domain, setDomain] = useState<string>(() => new URLSearchParams(window.location.search).get('rm_id') || 'Frontend Developer');
   const [newLearner, setNewLearner] = useState(false);
   const [g, setG] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
+    setLoadError(false);
     const roleMap: Record<string, string> = {
       'Frontend': 'Frontend Developer',
       'Backend': 'Backend Developer',
@@ -2226,6 +2311,9 @@ export function SkillGraphExplorer({ audience }: { audience: Audience }) {
     };
     import('../data/api').then(({ fetchGraphForRole }) => {
       fetchGraphForRole(roleMap[domain] || domain).then(data => {
+        if (cancelled) return;
+        if (!data.role) throw new Error('No graph data available');
+        if (domain !== data.role.id && domain !== data.role.props.name && domain !== 'All') setDomain(String(data.role.props.name));
         if (cfg.previewNewLearner && newLearner) {
           data.rels = data.rels.filter(r => r.type !== 'HAS_SKILL');
           data.out.forEach((rels, key) => data.out.set(key, rels.filter(r => r.type !== 'HAS_SKILL')));
@@ -2234,11 +2322,19 @@ export function SkillGraphExplorer({ audience }: { audience: Audience }) {
         setG(data);
         setLoading(false);
       }).catch(err => {
+        if (cancelled) return;
         console.error(err);
+        setLoadError(true);
         setLoading(false);
       });
-    });
-  }, [domain, newLearner, cfg.previewNewLearner]);
+    }).catch(() => { if (!cancelled) { setLoadError(true); setLoading(false); } });
+    return () => { cancelled = true; };
+  }, [domain, newLearner, cfg.previewNewLearner, retry]);
+
+  if (loadError) return <div className="skill-graph-explorer bg-background text-foreground rounded-xl p-12 text-center" role="alert">
+    <p>Unable to load graph data. Check the backend connection and try again.</p>
+    <button className="mt-4 border border-border rounded-lg px-4 py-2" onClick={() => setRetry(n => n + 1)}>Try again</button>
+  </div>;
 
   if (loading || !g) {
     return <div className="p-12 text-center text-muted-foreground flex flex-col items-center justify-center min-h-[50vh]">
@@ -2254,17 +2350,27 @@ function SkillGraphExplorerInner({ g, cfg, domain, setDomain, newLearner, setNew
   const { system, personal } = cfg;
   const [viewMode, setViewMode] = useState<ViewMode>('graph');
   const [colorMode, setColorMode] = useState<ColorMode>('label');
-  const [hiddenLabels, setHiddenLabels] = useState<NodeLabel[]>(['Knowledge']);
+  const [hiddenLabels, setHiddenLabels] = useState<NodeLabel[]>(['Knowledge', 'Account', 'Task', 'Content', 'Quiz', 'Mentor']);
+  const [areaId, setAreaId] = useState('');
+  const [neighborhoodOnly, setNeighborhoodOnly] = useState(true);
+  const [layout, setLayout] = useState<'clusters' | 'layers'>('clusters');
+  const [showAllAtlasAreas, setShowAllAtlasAreas] = useState(false);
   const [hiddenRels, setHiddenRels] = useState<RelType[]>([]);
   const [showEdgeLabels, setShowEdgeLabels] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [darkMode, setDarkMode] = useState(() => document.documentElement.classList.contains('dark'));
   const [view, setView] = useState({ x: 40, y: 40, k: 1 });
   const [issuesOpen, setIssuesOpen] = useState(false);
+  const overview = !system && viewMode === 'graph' && layout === 'clusters' && !areaId && !selectedId;
+  const areas = useMemo(() => areaOverview(g), [g]);
+  const activeArea = areas.find(a => a.id === areaId);
+  const areaConcepts = useMemo(() => areaId ? (g.out.get(areaId) || [])
+    .filter(r => r.type === 'HAS' && g.byId.get(r.to)?.label === 'Knowledge')
+    .map(r => g.byId.get(r.to)!).sort((a, b) => nodeName(a).localeCompare(nodeName(b))) : [], [g, areaId]);
 
-  const pos = useMemo(() => layoutGraph(g), [g]);
   const issues = useMemo(() => validateGraph(g), [g]);
 
   // Public page has no personal data to colour by
@@ -2272,30 +2378,47 @@ function SkillGraphExplorerInner({ g, cfg, domain, setDomain, newLearner, setNew
 
   // Non-system audiences never see shadow nodes or their edges; the graph
   // still holds them (proficiency and resources are derived from them).
-  const visibleNodes = useMemo(
-    () => g.nodes.filter(n => (system || !isShadow(n.label)) && !hiddenLabels.includes(n.label)),
-    [g, hiddenLabels, system]
-  );
+  const scope = useMemo(() => areaId ? areaScope(g, areaId) : null, [g, areaId]);
+  const atlas = useMemo(() => system && layout === 'clusters'
+    ? adminAtlas(g, areaId, selectedId || '', !hiddenLabels.includes('Knowledge'), showAllAtlasAreas ? Infinity : 18) : null,
+    [g, system, layout, areaId, selectedId, hiddenLabels, showAllAtlasAreas]);
+  const visibleNodes = useMemo(() => {
+    const neighbors = new Set<string>(selectedId ? [selectedId] : []);
+    if (selectedId) (atlas ? atlas.rels.filter(r => r.from === selectedId || r.to === selectedId) : [...(g.in.get(selectedId) || []), ...(g.out.get(selectedId) || [])])
+      .forEach(r => { neighbors.add(r.from); neighbors.add(r.to); });
+    return (atlas?.nodes || g.nodes).filter(n => (system || !isShadow(n.label)) && (
+      selectedId && neighborhoodOnly ? neighbors.has(n.id) && (n.id === selectedId || !hiddenLabels.includes(n.label))
+        : (!scope || scope.has(n.id)) && !hiddenLabels.includes(n.label)
+    ));
+  }, [g, atlas, hiddenLabels, system, scope, selectedId, neighborhoodOnly]);
   const visibleRels = useMemo(() => {
     const ids = new Set(visibleNodes.map(n => n.id));
-    return g.rels.filter(r => (system || LEARNER_RELS.includes(r.type)) && !hiddenRels.includes(r.type) && ids.has(r.from) && ids.has(r.to));
-  }, [g, visibleNodes, hiddenRels, system]);
+    const actual = (atlas?.rels || g.rels).filter(r => (system || LEARNER_RELS.includes(r.type)) && !hiddenRels.includes(r.type) && ids.has(r.from) && ids.has(r.to));
+    if (atlas) return actual;
+    return hiddenRels.includes('REQUIRES') || (selectedId && neighborhoodOnly) ? actual : [...actual, ...areaSummaryLinks(g, visibleNodes)];
+  }, [g, atlas, visibleNodes, hiddenRels, system, selectedId, neighborhoodOnly]);
+  const pos = useMemo(() => atlas ? atlasLayout(g, visibleNodes, visibleRels)
+    : layout === 'clusters' ? clusterLayout(g, visibleNodes) : layoutGraph(g),
+    [g, atlas, visibleNodes, visibleRels, layout]);
 
   const searchHits = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = normalizeSearch(query.trim());
     if (!q) return null;
     return new Set(g.nodes.filter(n => {
       if (!system && isShadow(n.label)) return false;
       const aliases = Array.isArray(n.props.aliases) ? n.props.aliases : [];
       const hay = (system ? [n.id, n.props.name, ...aliases, SOURCE_RECORDS[n.id]?.title] : [n.props.name, ...aliases])
         .filter(Boolean).join(' ').toLowerCase();
-      return hay.includes(q);
+      return normalizeSearch(hay).includes(q);
     }).map(n => n.id));
   }, [g, query, system]);
 
   const selectNode = useCallback((id: string | null) => {
     setSelectedId(id);
-    if (id) setQuery('');
+    if (id) {
+      setQuery('');
+      setNeighborhoodOnly(true);
+    }
   }, []);
 
   // ── Pan & zoom ──
@@ -2323,7 +2446,15 @@ function SkillGraphExplorerInner({ g, cfg, domain, setDomain, newLearner, setNew
 
   useEffect(() => {
     if (viewMode === 'graph') fitToView();
-  }, [domain, viewMode, fitToView]);
+  }, [domain, viewMode, pos, fitToView]);
+
+  useEffect(() => {
+    const box = graphBoxRef.current;
+    if (!box || viewMode !== 'graph') return;
+    const observer = new ResizeObserver(() => { if (box.clientWidth) fitToView(); });
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [viewMode, fitToView]);
 
   const zoomAt = useCallback((factor: number, cx?: number, cy?: number) => {
     const box = graphBoxRef.current;
@@ -2331,7 +2462,7 @@ function SkillGraphExplorerInner({ g, cfg, domain, setDomain, newLearner, setNew
     const px = cx ?? box.clientWidth / 2;
     const py = cy ?? box.clientHeight / 2;
     setView(v => {
-      const k = Math.max(0.3, Math.min(3, v.k * factor));
+      const k = Math.max(0.01, Math.min(5, v.k * factor));
       const f = k / v.k;
       return { k, x: px - (px - v.x) * f, y: py - (py - v.y) * f };
     });
@@ -2370,7 +2501,7 @@ function SkillGraphExplorerInner({ g, cfg, domain, setDomain, newLearner, setNew
 
   const selected = selectedId ? g.byId.get(selectedId) ?? null : null;
   const hoverNodeObj = hoveredNode ? g.byId.get(hoveredNode) : null;
-  const hoverRelObj = hoveredEdge ? g.rels.find(r => r.id === hoveredEdge) : null;
+  const hoverRelObj = hoveredEdge ? visibleRels.find(r => r.id === hoveredEdge) : null;
 
   const VIEW_MODES = ([
     { v: 'graph', icon: <Network size={14} />, label: 'Graph' },
@@ -2385,12 +2516,12 @@ function SkillGraphExplorerInner({ g, cfg, domain, setDomain, newLearner, setNew
 
   const zoomBtnCls = 'w-8 h-8 rounded-lg bg-background border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors';
   const filterRowCls = (active: boolean) => `w-full flex items-center gap-2 px-2 py-1 rounded-lg text-sm transition-colors ${
-    active ? 'text-foreground hover:bg-background/60' : 'text-muted-foreground opacity-45 hover:opacity-75'
+    active ? 'text-foreground hover:bg-background/60' : 'text-muted-foreground opacity-70 hover:opacity-100'
   }`;
 
   return (
     <AudienceCtx.Provider value={cfg}>
-    <div className="space-y-8">
+    <div className="skill-graph-explorer space-y-8 bg-background text-foreground rounded-xl p-4">
       {/* MARKER-MAKE-KIT-INVOKED */}
       {/* MARKER-MAKE-KIT-DISCOVERY-READ */}
 
@@ -2401,9 +2532,19 @@ function SkillGraphExplorerInner({ g, cfg, domain, setDomain, newLearner, setNew
           <p className="text-muted-foreground">{cfg.subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
+          {system && <button type="button" aria-label={darkMode ? 'Use light mode' : 'Use dark mode'}
+            onClick={() => setDarkMode(current => {
+              document.documentElement.classList.toggle('dark', !current);
+              return !current;
+            })}
+            className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground hover:bg-muted">
+            {darkMode ? <Sun size={16} /> : <Moon size={16} />}
+            <span className="hidden sm:inline">{darkMode ? 'Light mode' : 'Dark mode'}</span>
+          </button>}
           <div className="relative">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <input
+              aria-label="Search graph nodes"
               value={query}
               onChange={e => setQuery(e.target.value)}
               onKeyDown={e => {
@@ -2416,6 +2557,16 @@ function SkillGraphExplorerInner({ g, cfg, domain, setDomain, newLearner, setNew
               placeholder={system ? 'Search nodes, ids, aliases…' : 'Search skills and concepts…'}
               className="w-60 pl-10 pr-4 py-2.5 bg-background border border-border rounded-lg text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
             />
+            {searchHits && <div className="absolute right-0 top-full mt-2 w-80 max-h-80 overflow-y-auto rounded-xl border border-border bg-background text-foreground shadow-lg z-40 p-2">
+              <p className="text-xs text-muted-foreground p-2" role="status">{searchHits.size} results · across this role</p>
+              {[...searchHits].slice(0, 30).map(id => {
+                const n = g.byId.get(id)!;
+                return <button key={id} className="w-full text-left p-2 rounded-lg hover:bg-muted" onClick={() => { selectNode(id); setViewMode('graph'); }}>
+                  <span className="block text-sm">{nodeName(n)}</span><span className="text-xs text-muted-foreground">{n.label}</span>
+                </button>;
+              })}
+              {searchHits.size > 30 && <p className="p-2 text-xs text-muted-foreground">Showing first 30. Refine your search for more specific results.</p>}
+            </div>}
           </div>
           {cfg.previewNewLearner && (
             <button
@@ -2436,9 +2587,9 @@ function SkillGraphExplorerInner({ g, cfg, domain, setDomain, newLearner, setNew
         {(g.domains || []).map((d: string) => (
           <button
             key={d}
-            onClick={() => { setDomain(d); setSelectedId(null); }}
+            onClick={() => { setDomain(d); setSelectedId(null); setAreaId(''); setQuery(''); }}
             className={`px-4 py-2 rounded-lg text-sm whitespace-nowrap transition-colors ${
-              domain === d ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'
+              domain === d || (domain === g.role.id && g.role.props.name === d) ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'
             }`}
           >
             {d}
@@ -2571,21 +2722,80 @@ function SkillGraphExplorerInner({ g, cfg, domain, setDomain, newLearner, setNew
 
         {/* ── MAIN ── */}
         <div className="space-y-6 min-w-0">
+          {viewMode === 'graph' && <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border p-3 bg-background text-sm">
+            <label className="flex items-center gap-2">Layout
+              <select aria-label="Graph layout" value={layout} onChange={e => setLayout(e.target.value as 'clusters' | 'layers')} className="bg-background text-foreground border border-border rounded-lg p-2">
+                <option value="clusters">Connected clusters</option><option value="layers">Layers</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2">Area
+              <select aria-label="Knowledge area" value={areaId} onChange={e => { setAreaId(e.target.value); setSelectedId(null); }} className="max-w-56 bg-background text-foreground border border-border rounded-lg p-2">
+                <option value="">All areas</option>
+                {g.nodes.filter(n => n.label === 'KnowledgeArea').map(n => <option key={n.id} value={n.id}>{nodeName(n)}</option>)}
+              </select>
+            </label>
+            <button className="rounded-lg border border-border px-3 py-2 hover:bg-muted" onClick={() => { setAreaId(''); setSelectedId(null); setQuery(''); setHiddenLabels(['Knowledge', 'Account', 'Task', 'Content', 'Quiz', 'Mentor']); setHiddenRels([]); }}>Overview</button>
+            {atlas && !areaId && atlas.totalAreas > 18 && <button className="rounded-lg border border-border px-3 py-2 hover:bg-muted" onClick={() => setShowAllAtlasAreas(v => !v)}>
+              {showAllAtlasAreas ? 'Show main clusters' : `Show all ${atlas.totalAreas} areas`}
+            </button>}
+            {selectedId && <label className="flex items-center gap-2"><input type="checkbox" checked={neighborhoodOnly} onChange={e => setNeighborhoodOnly(e.target.checked)} />Selected node + neighbors</label>}
+            <p className="w-full text-xs text-muted-foreground" role="status">{atlas ? `${visibleNodes.length} nodes · ${visibleRels.length} visible connections · ${atlas.areaIds.size}/${atlas.totalAreas} related areas. Larger circles have more links; hover or click to inspect.` : overview ? `${areas.length} knowledge areas · ${g.nodes.filter(n => n.label === 'Skill').length} skills in this role. Choose an area to explore.` : `${visibleNodes.length} nodes · ${visibleRels.length} connections in this view.`}</p>
+            {atlas && !areaId && !hiddenLabels.includes('Knowledge') && <p className="w-full text-xs text-muted-foreground">Choose an area to display its individual Knowledge nodes.</p>}
+            {!visibleNodes.length && <p>No nodes match these filters. Use Overview to reset.</p>}
+          </div>}
           <div
             ref={graphBoxRef}
-            className={`relative h-[74vh] min-h-[560px] max-h-[780px] rounded-2xl overflow-hidden ${MUTED_TINT_CLS} ${viewMode === 'graph' ? 'cursor-grab active:cursor-grabbing touch-none' : ''}`}
-            onPointerDown={viewMode === 'graph' ? onPointerDown : undefined}
-            onPointerMove={viewMode === 'graph' ? onPointerMove : undefined}
+            className={`relative h-[74vh] min-h-[560px] max-h-[780px] rounded-2xl overflow-hidden ${MUTED_TINT_CLS} ${viewMode === 'graph' && !overview ? 'cursor-grab active:cursor-grabbing touch-none' : ''}`}
+            onPointerDown={viewMode === 'graph' && !overview ? onPointerDown : undefined}
+            onPointerMove={viewMode === 'graph' && !overview ? onPointerMove : undefined}
             onPointerUp={onPointerUp}
             onPointerLeave={onPointerUp}
           >
-            {viewMode === 'graph' && (
+            {viewMode === 'graph' && !overview && (
               <div className="absolute inset-0 pointer-events-none"
                 style={{ backgroundImage: 'radial-gradient(circle, rgba(148,163,184,0.25) 1px, transparent 1px)', backgroundSize: '28px 28px' }} />
             )}
 
-            {viewMode === 'graph' && (
-              <GraphCanvas
+            {overview && <div className="relative h-full overflow-y-auto p-5 sm:p-7 bg-background text-foreground">
+              <div className="flex flex-wrap items-end justify-between gap-3 mb-6">
+                <div><p className="text-xs uppercase tracking-widest text-muted-foreground">Role overview</p>
+                  <h2 className="text-2xl font-semibold mt-1">{nodeName(g.role)}</h2>
+                  <p className="text-sm text-muted-foreground mt-1">Explore by knowledge area. Each card shows the concepts and skills linked to this role.</p>
+                </div>
+                <span className="text-sm rounded-full border border-border px-3 py-1.5">{areas.length} areas</span>
+              </div>
+              {areas.length ? <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                {areas.map((area, i) => <button key={area.id} onClick={() => setAreaId(area.id)}
+                  className="group min-h-48 text-left rounded-2xl border border-border bg-card text-card-foreground p-5 hover:border-[#376c85] hover:shadow-md focus-visible:outline-2 focus-visible:outline-ring transition-all">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="inline-flex w-10 h-10 items-center justify-center rounded-full bg-[#376c85]/10 text-[#376c85] dark:text-[#9ccbdd] text-xs font-bold border border-[#376c85]/20">{String(i + 1).padStart(2, '0')}</span>
+                    <ArrowRight size={16} className="text-muted-foreground group-hover:text-foreground" />
+                  </div>
+                  <h3 className="text-base font-semibold leading-snug mt-3 line-clamp-2">{area.name}</h3>
+                  <div className="flex flex-wrap gap-2 mt-3 text-xs"><span className="rounded-full bg-muted px-2 py-1">{area.concepts} concepts</span><span className="rounded-full bg-muted px-2 py-1">{area.skills} skills</span></div>
+                  {area.skillNames.length > 0 && <p className="mt-3 text-xs text-muted-foreground line-clamp-2">{area.skillNames.join(' · ')}{area.skills > 3 ? ' · …' : ''}</p>}
+                </button>)}
+              </div> : <p className="rounded-xl border border-border p-6 text-muted-foreground">This role has no knowledge area memberships yet. Check the graph data or search for a skill above.</p>}
+            </div>}
+
+            {viewMode === 'graph' && !overview && (atlas ? <AtlasCanvas
+                g={g}
+                nodes={visibleNodes}
+                rels={visibleRels}
+                pos={pos}
+                view={view}
+                selectedId={selectedId}
+                hoveredNode={hoveredNode}
+                searchHits={searchHits}
+                onSelect={id => {
+                  if (panned.current) { panned.current = false; return; }
+                  if (id && g.byId.get(id)?.label === 'KnowledgeArea' && areaId !== id) {
+                    setAreaId(id); setSelectedId(null);
+                  } else selectNode(id);
+                }}
+                onHoverNode={setHoveredNode}
+                contentRef={graphContentRef}
+              /> : <GraphCanvas
                 g={g}
                 pos={pos}
                 nodes={visibleNodes}
@@ -2601,8 +2811,7 @@ function SkillGraphExplorerInner({ g, cfg, domain, setDomain, newLearner, setNew
                 onHoverNode={setHoveredNode}
                 onHoverEdge={setHoveredEdge}
                 contentRef={graphContentRef}
-              />
-            )}
+              />)}
 
             {viewMode === 'schema' && (
               <SchemaView g={g} onPickLabel={l => { setHiddenLabels(NODE_LABELS.filter(x => x !== l)); setViewMode('graph'); }} />
@@ -2617,7 +2826,7 @@ function SkillGraphExplorerInner({ g, cfg, domain, setDomain, newLearner, setNew
               </div>
             )}
 
-            {viewMode === 'graph' && (
+            {viewMode === 'graph' && !overview && (
               <div className="absolute bottom-4 left-4 flex flex-col gap-1 z-10">
                 <button aria-label="Zoom in" onClick={() => zoomAt(1.2)} className={zoomBtnCls}><ZoomIn size={14} /></button>
                 <button aria-label="Zoom out" onClick={() => zoomAt(1 / 1.2)} className={zoomBtnCls}><ZoomOut size={14} /></button>
@@ -2633,6 +2842,18 @@ function SkillGraphExplorerInner({ g, cfg, domain, setDomain, newLearner, setNew
               </div>
             )}
           </div>
+
+          {viewMode === 'graph' && activeArea && <details className="rounded-xl border border-border bg-background text-foreground p-4">
+            <summary className="cursor-pointer font-medium flex flex-wrap items-center gap-2">
+              <BookOpen size={16} /> {activeArea.name} <span className="text-sm font-normal text-muted-foreground">{activeArea.concepts} concepts · {activeArea.skills} skills</span>
+            </summary>
+            <p className="text-sm text-muted-foreground mt-3">Select a concept to inspect its prerequisites and resources.</p>
+            <div className="mt-3 max-h-80 overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-2">
+              {areaConcepts.map(n => <button key={n.id} onClick={() => selectNode(n.id)} className="text-left rounded-lg border border-border p-2 text-sm hover:bg-muted">
+                {nodeName(n)}
+              </button>)}
+            </div>
+          </details>}
 
           {/* Encoding legend — below the canvas so it never covers nodes */}
           {viewMode === 'graph' && !system && (
@@ -2669,8 +2890,8 @@ function SkillGraphExplorerInner({ g, cfg, domain, setDomain, newLearner, setNew
             </div>
           )}
 
-          {/* ── Summary cards ── */}
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          {/* ── Summary cards for learner and public views ── */}
+          {!system && <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
             {personal ? (
               <>
                 <CareerReadinessCard g={g} />
@@ -2681,7 +2902,7 @@ function SkillGraphExplorerInner({ g, cfg, domain, setDomain, newLearner, setNew
             ) : (
               <RoleOverviewCards g={g} onSelect={id => { selectNode(id); setViewMode('graph'); }} />
             )}
-          </div>
+          </div>}
         </div>
       </div>
     </div>

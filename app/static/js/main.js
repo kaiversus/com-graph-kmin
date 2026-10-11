@@ -15,20 +15,51 @@ import { initAuth, applyRole, onReviewTab, loadMyRequests } from './review.js';
 import { initBatch } from './batch.js';
 
 // ---- Tabs ----
+let graphReturnTab = 'viz';
+let graphCanGoBack = false;
+const tabButton = id => document.querySelector(`.tab[data-tab="${id}"]`);
+
+function activateTab(btn, recordHistory = true) {
+  if (!btn || !document.getElementById(btn.dataset.tab)) return;
+  const current = document.querySelector('.tab.active')?.dataset.tab;
+  if (current === btn.dataset.tab) return;
+  if (btn.dataset.tab === 'react-viz' && current) {
+    graphReturnTab = current;
+    graphCanGoBack = recordHistory;
+  }
+  document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById(btn.dataset.tab).classList.add('active');
+  if (recordHistory) {
+    const url = new URL(location.href);
+    url.hash = btn.dataset.tab;
+    history.pushState({ tab: btn.dataset.tab }, '', url);
+  }
+  if (btn.dataset.tab === 'react-viz') {
+    const back = document.getElementById('react-viz-back');
+    const label = tabButton(graphReturnTab)?.textContent?.trim() || 'Visualizer';
+    back.textContent = `← Quay lại ${label}`;
+  }
+  if (btn.dataset.tab === 'audit') refreshAudit();
+  if (btn.dataset.tab === 'viz') renderViz();
+  if (btn.dataset.tab === 'roadmap') loadRoadmapSources();
+  if (btn.dataset.tab === 'build') rbInit();
+  if (btn.dataset.tab === 'review') onReviewTab();
+  if (btn.dataset.tab === 'myreq') loadMyRequests();
+  if (btn.dataset.tab === 'export') loadExportStats();
+}
+
 document.querySelectorAll('.tab').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById(btn.dataset.tab).classList.add('active');
-    if (btn.dataset.tab === 'audit') refreshAudit();
-    if (btn.dataset.tab === 'viz') renderViz();
-    if (btn.dataset.tab === 'roadmap') loadRoadmapSources();
-    if (btn.dataset.tab === 'build') rbInit();
-    if (btn.dataset.tab === 'review') onReviewTab();
-    if (btn.dataset.tab === 'myreq') loadMyRequests();
-    if (btn.dataset.tab === 'export') loadExportStats();
-  });
+  btn.addEventListener('click', () => activateTab(btn));
+});
+document.getElementById('react-viz-back').addEventListener('click', () => {
+  if (graphCanGoBack) history.back();
+  else activateTab(tabButton('viz'));
+});
+window.addEventListener('popstate', event => {
+  const id = event.state?.tab || location.hash.slice(1) || 'opt1';
+  activateTab(tabButton(id) || tabButton('opt1'), false);
 });
 
 // Nạp dữ liệu app — chỉ chạy SAU khi đã đăng nhập (các API này cần phiên).
@@ -64,6 +95,8 @@ async function bootstrap() {
   document.getElementById('myreq-refresh').addEventListener('click', loadMyRequests);
   // initAuth: nếu đã đăng nhập → loadAppData(); nếu chưa → hiện màn đăng nhập.
   await initAuth(loadAppData);
+  const requestedTab = tabButton(location.hash.slice(1));
+  if (requestedTab) activateTab(requestedTab, false);
 }
 
 bootstrap();

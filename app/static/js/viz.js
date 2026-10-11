@@ -204,7 +204,7 @@ function renderTableView(data) {
   const rtBody = document.querySelector('#viz-rels-table tbody');
   rtBody.innerHTML = data.relationships.map(r => {
     return '<tr>' + relKeys.map(k => {
-      if (k === 'type') return `<td style="color:var(--success);font-weight:600">${r.type}</td>`;
+      if (k === 'type') return `<td style="color:var(--kmin-success);font-weight:600">${r.type}</td>`;
       if (k === 'start' || k === 'end') return `<td>${r[k]}</td>`;
       return `<td>${r.props[k] ?? ''}</td>`;
     }).join('') + '</tr>';

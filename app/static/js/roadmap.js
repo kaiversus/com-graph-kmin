@@ -30,6 +30,7 @@ const RM = {
   filters: { q: '', status: 'all', essentialOnly: false },
   showLinks: true,
   collapsed: new Set(),   // key chang bi thu gon THU CONG
+  expandedBranches: new Set(), // knowledge panels opened by the reader
   selected: null,
   sourcesLoaded: false,
   deepLinkDone: false,
@@ -217,6 +218,7 @@ function renderAll(data) {
   RM.data = data;
   RM.selected = null;
   RM.collapsed = new Set();
+  RM.expandedBranches = new Set();
   RM.filters = { q: '', status: 'all', essentialOnly: false };
 
   RM.byId = new Map(data.nodes.map(n => [n.id, n]));
@@ -433,6 +435,8 @@ function renderToolbar() {
     stages.forEach(s => {
       if (anyOpen) RM.collapsed.add(s.dataset.key); else RM.collapsed.delete(s.dataset.key);
     });
+    if (anyOpen) RM.expandedBranches.clear();
+    else document.querySelectorAll('.rm-branch-toggle').forEach(btn => RM.expandedBranches.add(btn.dataset.branch));
     $('rm-fold-btn').textContent = anyOpen ? 'Mở hết' : 'Thu gọn hết';
     applyFilters();
   });
@@ -462,7 +466,7 @@ function guideHtml(personalized) {
         <span class="rm-gd-sw prog"></span><b>Cam</b> đang học ·
         <span class="rm-gd-sw todo"></span><b>Xám</b> chưa học ·
         <span class="rm-gd-sw lock"></span><b>Đỏ 🔒</b> chưa mở khoá vì còn thiếu mục phải học trước.</li>
-       <li>Dải <b>📍 BẠN ĐANG Ở ĐÂY</b> nằm ngay trước chặng bạn còn dang dở. Chặng nào xong 100% sẽ <b>tự thu gọn</b>.</li>`
+       <li>Dải <b>📍 BẠN ĐANG Ở ĐÂY</b> nằm ngay trước chặng bạn còn dang dở. Chặng hiện tại mở sẵn; các chặng khác thu gọn để dễ theo dõi.</li>`
     : `<li>Đây là <b>bản chung</b> nên chưa có màu tiến độ. Chọn một học viên ở trên rồi bấm
         <b>Tạo lộ trình</b> để mỗi ô tự đánh dấu đã đạt / đang học / chưa học.</li>`;
 
@@ -476,7 +480,7 @@ function guideHtml(personalized) {
         <li><b>Nét đứt</b> nối hai ô nghĩa là phải xong ô đầu mới học được ô sau.
             Rê chuột vào một ô để làm nổi chuỗi liên quan tới nó.</li>
         <li><b>Bấm vào một ô</b> → cột bên phải hiện mô tả, cần học trước những gì, và nó mở khoá cho cái gì.</li>
-        <li><b>Bấm tên chặng</b> để thu gọn hoặc mở lại. Ô tìm kiếm gõ <b>không cần dấu</b> cũng ra.</li>
+        <li><b>Bấm tên chặng</b> để mở, rồi bấm số kiến thức trước mỗi kỹ năng để xem theo lĩnh vực. Ô tìm kiếm gõ <b>không cần dấu</b> cũng ra.</li>
       </ul>
     </details>`;
 }
@@ -524,8 +528,9 @@ function renderTrack() {
     const support = g.kind === 'support';
     const num = support ? '0' : String(++idx);
     const complete = pers && g.total > 0 && g.done === g.total;
-    // Chang da xong thi thu gon san — bot nhieu, tap trung vao viec con lai.
-    if (complete) RM.collapsed.add(g.key);
+    // Start with a short table of contents. Keep the current stage (or the
+    // first stage for an unpersonalized roadmap) open as a clear entry point.
+    if (complete || (!g.current && (pers || idx > 1))) RM.collapsed.add(g.key);
 
     // is-tree: chua nhanh -> chua mang le trai cho duong noi giua cac bac chay doc.
     const isTree = !!(g.branches && g.branches.length);
@@ -586,17 +591,30 @@ function branchHtml(b) {
   const dep = (b.depends_on || []).length
     ? `<div class="rm-branch-dep">⛓ Cần xong trước: <b>${escapeHtml(b.depends_on.join(', '))}</b></div>` : '';
 
-  const steps = [];
-  prereqs.forEach(n => steps.push(`<li class="rm-step-node">${cardHtml(n)}</li>`));
-  // Muc dung chung da hien o bac som hon — nhac lai bang mot dong tro nguoc, khong nhan doi the.
-  shared.forEach(n => steps.push(
-    `<li class="rm-step-node is-ref"><button type="button" class="rm-refchip" data-node="${escapeHtml(n.id)}">
-       ↑ ${escapeHtml(n.label)} <span>đã có ở bậc trước</span></button></li>`));
+  const items = new Map();
+  [...prereqs.map(n => ({ n, shared: false })), ...shared.map(n => ({ n, shared: true }))].forEach(item => {
+    const area = item.n.area_name || 'Kiến thức khác';
+    if (!items.has(area)) items.set(area, []);
+    items.get(area).push(item);
+  });
+  const total = prereqs.length + shared.length;
+  const done = RM.data.personalized ? [...prereqs, ...shared].filter(n => n.status === 'done').length : null;
+  const sectionId = `rm-needs-${b.target_id}`;
+  const groups = [...items].map(([area, group]) => `<div class="rm-area-group">
+    <div class="rm-area-heading"><span>${escapeHtml(area)}</span><small>${group.length} mục</small></div>
+    <ol class="rm-branch-steps">${group.map(({ n, shared: isShared }) => isShared
+      ? `<li class="rm-step-node is-ref"><button type="button" class="rm-refchip" data-node="${escapeHtml(n.id)}">↑ ${escapeHtml(n.label)} <span>đã có ở bậc trước</span></button></li>`
+      : `<li class="rm-step-node">${cardHtml(n)}</li>`).join('')}</ol>
+  </div>`).join('');
 
-  const needs = steps.length
-    ? `<div class="rm-branch-needs">
-         <span class="rm-branch-needs-cap">Cần học trước để đạt</span>
-         <ol class="rm-branch-steps">${steps.join('')}</ol>
+  const needs = total
+    ? `<button type="button" class="rm-branch-toggle" data-branch="${escapeHtml(b.target_id)}"
+         aria-expanded="false" aria-controls="${escapeHtml(sectionId)}">
+         <span>📚 ${total} kiến thức cần trước${done === null ? '' : ` · ${done}/${total} đã đạt`}</span>
+         <span class="rm-branch-toggle-hint">Xem theo lĩnh vực ▾</span>
+       </button>
+       <div class="rm-branch-needs" id="${escapeHtml(sectionId)}" hidden>
+         ${groups}
        </div>`
     : '<div class="rm-branch-needs is-empty">Không cần kiến thức nền nào — bắt đầu được ngay.</div>';
 
@@ -707,6 +725,14 @@ function cardHtml(n, opts = {}) {
 
 function wireTrack(track) {
   track.addEventListener('click', e => {
+    const branchButton = e.target.closest('.rm-branch-toggle');
+    if (branchButton) {
+      const id = branchButton.dataset.branch;
+      if (RM.expandedBranches.has(id)) RM.expandedBranches.delete(id);
+      else RM.expandedBranches.add(id);
+      applyFilters();
+      return;
+    }
     const head = e.target.closest('.rm-stage-head');
     if (head) {
       const stage = head.closest('.rm-stage');
@@ -776,6 +802,15 @@ function applyFilters() {
     // Nhanh khong con the nao khop thi an luon ca dau nhanh.
     stage.querySelectorAll('.rm-branch').forEach(br => {
       br.hidden = active && !br.querySelector('.rm-card:not([hidden])');
+      const toggle = br.querySelector('.rm-branch-toggle');
+      const needs = br.querySelector('.rm-branch-needs');
+      if (toggle && needs) {
+        const matchingPrereq = !!needs.querySelector('.rm-card:not([hidden])');
+        const open = active ? matchingPrereq : RM.expandedBranches.has(toggle.dataset.branch);
+        toggle.setAttribute('aria-expanded', String(open));
+        needs.hidden = !open;
+        toggle.hidden = active && !matchingPrereq;
+      }
     });
     shown += visible;
     stage.hidden = active && visible === 0;
@@ -923,10 +958,11 @@ function focusNodeCard(nodeId) {
   const card = document.querySelector(`.rm-card[data-node="${CSS.escape(nodeId)}"]`);
   if (!card) return;
   const stage = card.closest('.rm-stage');
-  if (stage && stage.getAttribute('aria-expanded') === 'false') {
-    RM.collapsed.delete(stage.dataset.key);
-    applyFilters();
-  }
+  const branch = card.closest('.rm-branch');
+  const branchId = branch?.querySelector('.rm-branch-toggle')?.dataset.branch;
+  if (stage) RM.collapsed.delete(stage.dataset.key);
+  if (branchId) RM.expandedBranches.add(branchId);
+  applyFilters();
   card.scrollIntoView({ behavior: 'smooth', block: 'center' });
   card.classList.remove('rm-card-flash');
   void card.offsetWidth;              // ep trinh duyet chay lai animation

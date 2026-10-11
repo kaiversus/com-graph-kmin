@@ -315,10 +315,12 @@ def roadmap_by_role(request: Request, role_id: str, account_id: str | None = Non
         prereqs = session.run(
             "MATCH (r:JobRole {id: $rid})-[:REQUIRES]->(s:Skill)-[pr:REQUIRES]->(p) "
             "WHERE p:Skill OR p:Knowledge "
+            "OPTIONAL MATCH (area:KnowledgeArea)-[:HAS]->(p) "
             "RETURN s.id AS skill_id, p.id AS prereq_id, p.name AS prereq_name, "
             "       head(labels(p)) AS prereq_type, "
             "       coalesce(p.level, p.difficulty) AS prereq_level, "
-            "       p.description AS prereq_description, pr.weight AS weight",
+            "       p.description AS prereq_description, pr.weight AS weight, "
+            "       head(collect(DISTINCT area.name)) AS area_name",
             rid=role_id,
         ).data()
 
@@ -465,6 +467,7 @@ def _build_role_tree(root, skills, prereqs, acc_map, know_prof, res_skill, res_k
                     "difficulty": p.get("prereq_level"),
                     "proficiency": pprof,
                     "description": p.get("prereq_description"),
+                    "area_name": p.get("area_name"),
                     "resources": pres,
                 })
                 seen.add(pid)
